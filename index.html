@@ -31,6 +31,8 @@ canvas {
   width: 100vw;
   height: 100vh;
   pointer-events: none;
+  /* 日本語コメント: 低解像度を拡大しても輪郭が潰れにくい（AIの視認性も上がる） */
+  image-rendering: pixelated;
 }
 </style>
 </head>
@@ -43,10 +45,10 @@ iPhone Camera → Edges + COCO-SSD → Obstacle
 
 <video id="video" autoplay playsinline></video>
 <canvas id="cv"></canvas>
-<canvas id="ov"></canvas>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
+<script src="./semantic-map.js"></script>
 
 <script>
 // Optimization summary:
@@ -84,8 +86,96 @@ navigator.mediaDevices.getUserMedia(cameraConstraints).then((stream) => {
 /* ===== Canvas ===== */
 const cvCanvas = document.getElementById('cv');
 // 日本語コメント: VideoCaptureを使うため、CanvasのdrawImage→imreadは不要（CPU/メモリの節約）
-const overlayCanvas = document.getElementById('ov');
-const overlayCtx = overlayCanvas.getContext('2d');
+// 日本語コメント: Agent browserのVisionが「1枚の画」として取りやすいよう、エッジ＋BBoxは同一canvasに合成する
+const overlayCtx = cvCanvas.getContext('2d');
+
+/* ===== Semantic Map（Depth→単色） ===== */
+// 日本語コメント:
+// - エッジ強調は「植物/影/模様」まで増幅して破綻しやすい
+// - Agent Visionには「意味（青=通路, 赤=障害物, 黒=未知）」だけを渡す方が強い
+// - 3Dcap側から Float32Array(640*480, 単位m) を受け取り、ここで単色マップに変換する
+const semantic = {
+  enabled: true,              // 日本語コメント: Depthが来たら自動で優先（来ない場合は既存のエッジ表示）
+  width: 640,
+  height: 480,
+  latestDepth: null,          // Float32Array
+  lastRenderAtMs: 0,
+  renderIntervalMs: 66,       // 約15fps（視認性とCPUのバランス）
+  stats: { safe: 0, obstacle: 0, unknown: 0, total: 0 },
+  params: {
+    nearM: 0.25,
+    farM: 6.0,
+    groundBandM: 0.02,
+    obstacleDeltaM: 0.05,     // 日本語コメント: 5cm段差を障害物扱い
+    yStartRatio: 0.55,
+    expectedQuantile: 0.2,
+  },
+};
+
+// 日本語コメント: 外部（3Dcap/ネイティブ/WS/worker等）からDepthフレームを投入する窓口
+// 使い方: window.pushDepthFrame(depthFloat32Array)
+window.pushDepthFrame = function pushDepthFrame(depthFloat32Array) {
+  if (!(depthFloat32Array instanceof Float32Array)) return;
+  if (depthFloat32Array.length !== semantic.width * semantic.height) return;
+  semantic.latestDepth = depthFloat32Array;
+};
+
+// 日本語コメント: 動作確認用のダミーDepth（外部入力がまだ無い時のテストに使う）
+// 使い方: window.debugInjectDummyDepth()
+window.debugInjectDummyDepth = function debugInjectDummyDepth() {
+  const w = semantic.width;
+  const h = semantic.height;
+  const d = new Float32Array(w * h);
+  // 日本語コメント: 地面（奥へ行くほど少し遠い想定）
+  for (let y = 0; y < h; y++) {
+    const zRow = 1.2 + (y / (h - 1)) * 1.2; // 1.2m〜2.4m
+    const base = y * w;
+    for (let x = 0; x < w; x++) d[base + x] = zRow;
+  }
+  // 日本語コメント: 手前に障害物（矩形）を置く（期待地面より0.12m近い）
+  const ox0 = Math.floor(w * 0.40);
+  const ox1 = Math.floor(w * 0.60);
+  const oy0 = Math.floor(h * 0.65);
+  const oy1 = Math.floor(h * 0.88);
+  for (let y = oy0; y < oy1; y++) {
+    const base = y * w;
+    for (let x = ox0; x < ox1; x++) d[base + x] -= 0.12;
+  }
+  // 日本語コメント: 植物（欠損）をランダムな穴として作る（未知=黒になることの確認）
+  for (let i = 0; i < 7000; i++) {
+    const x = (Math.random() * w) | 0;
+    const y = (Math.random() * h) | 0;
+    d[y * w + x] = NaN;
+  }
+  window.pushDepthFrame(d);
+};
+
+// 日本語コメント: 単色マップ描画（成功したらtrue）。CV/ML描画より先に走らせる。
+function maybeRenderSemanticMap(nowMs) {
+  if (!semantic.enabled) return false;
+  if (!semantic.latestDepth) return false;
+  if (typeof window.renderSemanticMap !== 'function') return false;
+  if (nowMs < semantic.lastRenderAtMs + semantic.renderIntervalMs) return true;
+  semantic.lastRenderAtMs = nowMs;
+
+  try {
+    const st = window.renderSemanticMap({
+      depth: semantic.latestDepth,
+      width: semantic.width,
+      height: semantic.height,
+      canvas: cvCanvas,
+      ...semantic.params,
+    });
+    semantic.stats.safe = st.safeCount;
+    semantic.stats.obstacle = st.obstacleCount;
+    semantic.stats.unknown = st.unknownCount;
+    semantic.stats.total = st.total;
+  } catch (_) {
+    // 日本語コメント: 失敗時はフォールバック（既存処理は止めない）
+    return false;
+  }
+  return true;
+}
 
 /* ===== Three.js ===== */
 const scene = new THREE.Scene();
@@ -114,8 +204,8 @@ wirePosAttr.setUsage(THREE.DynamicDrawUsage);
 wireGeom.setAttribute('position', wirePosAttr);
 wireGeom.setDrawRange(0, 0);
 
-// 日本語コメント: 障害物は「危険」を示すため赤系で描画（UIポリッシュではなく意味付け）
-const wireMat = new THREE.LineBasicMaterial({ color: 0xff3355 });
+// 日本語コメント: AI優先（白黒）なので、3D線の色も白（ただし現状3D描画は停止）
+const wireMat = new THREE.LineBasicMaterial({ color: 0xffffff });
 const wire = new THREE.LineSegments(wireGeom, wireMat);
 // 日本語コメント: 動的ジオメトリはバウンディング更新が追いつかず「見えてるのにカリングされる」ことがあるので無効化
 wire.frustumCulled = false;
@@ -125,7 +215,7 @@ scene.add(wire);
 // 日本語コメント: 「一番検知したもの」を最小限の立方体で粗く表現する（面は描かずワイヤフレーム表示）
 const MAX_VOXELS = 96; // 日本語コメント: 上限（iPhone向けに控えめ）
 const voxelGeom = new THREE.BoxGeometry(1, 1, 1);
-const voxelMat = new THREE.MeshBasicMaterial({ color: 0xff3355, wireframe: true });
+const voxelMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
 const voxelMesh = new THREE.InstancedMesh(voxelGeom, voxelMat, MAX_VOXELS);
 voxelMesh.frustumCulled = false;
 voxelMesh.count = 0;
@@ -150,6 +240,7 @@ const OBSTACLE_BORDER_MARGIN_PX = 10; // 画面端のフレーム/窓枠を避�
 const OBSTACLE_BOTTOM_START = 0.45;   // 画面下寄りを「近い障害物」優先にする（0..1）
 const OBSTACLE_CENTER_MIN = 0.25;     // 中央からのズレ許容（小さいほど中央重視）
 const EDGE_DIM_ALPHA = 0.70;          // 日本語コメント: 障害物以外のエッジは暗くして「避けなくていいもの」を目立たせない
+const EDGE_FULLFRAME = true;          // 日本語コメント: Agent browser想定：全画面エッジ（A）を常に見せる
 
 // 日本語コメント: 余計な割り当てを避けるため、候補/採用インデックス配列を再利用
 const candidateIdx = [];
@@ -165,6 +256,11 @@ const tmpObj3D = new THREE.Object3D();
 // - Hough/線分トラッキング/3DワイヤはデフォルトOFF（将来戻せるようコードは残す）
 const EDGE_AND_ML_ONLY = true;
 const ENABLE_HOUGH = false;
+// 日本語コメント: 探査機（ロボット）側の「最小衝突回避」用（左右どちらに避けるか）
+const ENABLE_HAZARD_STEER = true;
+const HAZARD_ROI_Y_START = 0.60; // 下40%を見る
+const HAZARD_BINS = 9;          // 横分割数（おすすめ）
+const HAZARD_GRAD_THRESH = 40;  // 小さい勾配は無視（ノイズ除去）
 
 /* ===== 状態 ===== */
 const state = {
@@ -225,6 +321,10 @@ const state = {
   mlLastScore: 0,
   mlLastBox: null, // {x,y,w,h} in video pixel coords
 };
+
+// 日本語コメント: Agent browserのVision向けにUIを最小化（必要ならUで表示）
+let uiVisible = false;
+document.getElementById('ui').style.display = uiVisible ? 'block' : 'none';
 
 // 日本語コメント: COCO-SSDの対象クラス（必要なら調整）
 // - 「避けるべき障害物」を想定して、人工物中心でフィルタ
@@ -381,6 +481,19 @@ let lines = null;       // Houghの出力（サイズは内部で変わる）
 let procSize = null;    // 日本語コメント: resize用Sizeを再利用（毎フレームnewしない）
 let blurKSize = null;   // 日本語コメント: GaussianBlurのカーネルサイズ
 let dilateKernel = null; // 日本語コメント: エッジ接続用（Houghを出やすくする）
+// 日本語コメント: 衝突回避（勾配）用Matは再利用してGC圧を下げる
+let gradX = null;
+let gradY = null;
+let absX = null;
+let absY = null;
+let grad = null;
+
+// 日本語コメント: 衝突回避出力（探査機側が送る最小データ相当）
+const hazard = {
+  columns: new Float32Array(HAZARD_BINS),
+  bestSteer: 0, // -1..+1
+  hazardScore: 0, // 0..1
+};
 
 // 日本語コメント: VideoCaptureが黒フレームになる環境向けのフォールバック（drawImage→ImageData）
 const grabCanvas = document.createElement('canvas');
@@ -423,8 +536,6 @@ function setupCvProcessingSize() {
 
   cvCanvas.width = state.procW;
   cvCanvas.height = state.procH;
-  overlayCanvas.width = state.procW;
-  overlayCanvas.height = state.procH;
   grabCanvas.width = state.procW;
   grabCanvas.height = state.procH;
 
@@ -444,6 +555,16 @@ function setupCvProcessingSize() {
   blur = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
   edges = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
   lines = new cv.Mat();
+  if (gradX) gradX.delete();
+  if (gradY) gradY.delete();
+  if (absX) absX.delete();
+  if (absY) absY.delete();
+  if (grad) grad.delete();
+  gradX = new cv.Mat(state.procH, state.procW, cv.CV_16S);
+  gradY = new cv.Mat(state.procH, state.procW, cv.CV_16S);
+  absX = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
+  absY = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
+  grad = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
 
   // 日本語コメント: OpenCVのSizeオブジェクトも使い回す（毎フレームの生成を避ける）
   procSize = new cv.Size(state.procW, state.procH);
@@ -1227,6 +1348,64 @@ function runCvOnce(nowMs) {
   // 日本語コメント: 画が黒い/止まっている切り分け用（平均輝度）
   state.lastGrayMean = cv.mean(gray)[0];
 
+  // 日本語コメント: 衝突回避（左右操舵）用の危険度ヒートマップを作る
+  // - 岩のような不規則物体でも「局所的な勾配（起伏/段差/テクスチャ）」は増えやすい
+  // - 画面下部だけを見て、横方向に危険度を集計して左右の回避判断にする
+  if (ENABLE_HAZARD_STEER) {
+    cv.Sobel(gray, gradX, cv.CV_16S, 1, 0, 3, 1, 0, cv.BORDER_DEFAULT);
+    cv.Sobel(gray, gradY, cv.CV_16S, 0, 1, 3, 1, 0, cv.BORDER_DEFAULT);
+    cv.convertScaleAbs(gradX, absX);
+    cv.convertScaleAbs(gradY, absY);
+    // 日本語コメント: |Gx|+|Gy|（軽量）で勾配強度を作る
+    cv.addWeighted(absX, 1.0, absY, 1.0, 0.0, grad);
+
+    // 日本語コメント: 小さい勾配は0にしてノイズを落とす（閾値は環境で調整）
+    cv.threshold(grad, grad, HAZARD_GRAD_THRESH, 255, cv.THRESH_TOZERO);
+
+    // 日本語コメント: ROI下部の勾配強度を列ごとに積算（余計なMat生成はしない）
+    hazard.columns.fill(0);
+    const w = state.procW;
+    const h = state.procH;
+    const y0 = Math.floor(h * HAZARD_ROI_Y_START);
+    const binW = w / HAZARD_BINS;
+    const data = grad.data; // 8U
+
+    for (let y = y0; y < h; y += 1) {
+      let rowOff = y * w;
+      for (let x = 0; x < w; x += 1) {
+        const v = data[rowOff + x];
+        // 日本語コメント: 0が多いので分岐で節約
+        if (v === 0) continue;
+        const bi = Math.min(HAZARD_BINS - 1, Math.floor(x / binW));
+        hazard.columns[bi] += v;
+      }
+    }
+
+    // 日本語コメント: 0..1に正規化し、最小列＝安全方向として操舵を決める
+    let maxV = 0;
+    for (let i = 0; i < HAZARD_BINS; i += 1) {
+      if (hazard.columns[i] > maxV) maxV = hazard.columns[i];
+    }
+    if (maxV < 1e-6) {
+      hazard.hazardScore = 0;
+      hazard.bestSteer = 0;
+    } else {
+      let bestI = 0;
+      let bestVal = Infinity;
+      for (let i = 0; i < HAZARD_BINS; i += 1) {
+        const nv = hazard.columns[i] / maxV;
+        hazard.columns[i] = nv;
+        if (nv < bestVal) {
+          bestVal = nv;
+          bestI = i;
+        }
+      }
+      hazard.hazardScore = 1; // 日本語コメント: ここでは相対指標なので1固定（必要ならmaxVで別指標化）
+      const mid = (HAZARD_BINS - 1) / 2;
+      hazard.bestSteer = (bestI - mid) / mid; // -1..+1
+    }
+  }
+
   // 日本語コメント: 「黒フレームが続く」場合は自動でフォールバックへ切替
   if (state.lastBlurMean < 1.0 && state.lastEdgeNZ === 0) {
     state.blackStreak += 1;
@@ -1251,7 +1430,6 @@ function runCvOnce(nowMs) {
   // 日本語コメント: エッジ表示（障害物検知の可視化）
   if (state.debugEdges) {
     cvCanvas.style.display = 'block';
-    overlayCanvas.style.display = 'block';
     cv.imshow(cvCanvas, edges);
 
     // 日本語コメント: 可能なら「避けるべき物体（COCO-SSDのBBox）」以外を暗くする
@@ -1261,11 +1439,15 @@ function runCvOnce(nowMs) {
       state.mlLastBox &&
       state.mlLastScore >= state.mlMinScore;
 
-    // 日本語コメント: BBoxがない場合はエッジ全体を薄く見せる（状況把握用）
-    const dimA = hasMlObs ? EDGE_DIM_ALPHA : 0.25;
-    overlayCtx.clearRect(0, 0, state.procW, state.procH);
-    overlayCtx.fillStyle = `rgba(0,0,0,${dimA})`;
-    overlayCtx.fillRect(0, 0, state.procW, state.procH);
+    // 日本語コメント: Aモード（全画面エッジ）は“暗転しない”で、BBoxだけを最小限に重ねる
+    if (!EDGE_FULLFRAME) {
+      const dimA = hasMlObs ? EDGE_DIM_ALPHA : 0.25;
+      overlayCtx.save();
+      overlayCtx.globalCompositeOperation = 'source-over';
+      overlayCtx.fillStyle = `rgba(0,0,0,${dimA})`;
+      overlayCtx.fillRect(0, 0, state.procW, state.procH);
+      overlayCtx.restore();
+    }
 
     if (hasMlObs) {
       // 日本語コメント: COCO-SSDはproc座標で保持しているので、そのまま描画できる
@@ -1275,10 +1457,8 @@ function runCvOnce(nowMs) {
       const wBox = Math.max(1, Math.min(state.procW - x, b.w));
       const hBox = Math.max(1, Math.min(state.procH - y, b.h));
 
-      // 日本語コメント: 障害物の領域だけを“明るく”残す（避けなくていいものは目立たせない）
-      overlayCtx.clearRect(x, y, wBox, hBox);
-
-      overlayCtx.strokeStyle = 'rgba(255,51,85,0.95)';
+      // 日本語コメント: AI優先の白黒（BBoxも白）。色の依存を避ける
+      overlayCtx.strokeStyle = 'rgba(255,255,255,0.95)';
       overlayCtx.lineWidth = 2;
       overlayCtx.strokeRect(x + 0.5, y + 0.5, wBox - 1, hBox - 1);
 
@@ -1290,14 +1470,46 @@ function runCvOnce(nowMs) {
       const th = 16;
       const lx = x;
       const ly = Math.max(0, y - th);
-      overlayCtx.fillStyle = 'rgba(255,51,85,0.85)';
+      overlayCtx.fillStyle = 'rgba(255,255,255,0.85)';
       overlayCtx.fillRect(lx, ly, tw, th);
       overlayCtx.fillStyle = 'rgba(0,0,0,0.95)';
       overlayCtx.fillText(label, lx + pad, ly + 12);
     }
+
+    // 日本語コメント: 探査機側の回避判断をAIが読めるように、下部に最小のバー（9分割）を描く
+    if (ENABLE_HAZARD_STEER) {
+      const w = state.procW;
+      const h = state.procH;
+      const barH = Math.max(10, Math.floor(h * 0.06));
+      const y = h - barH;
+      overlayCtx.save();
+      overlayCtx.globalCompositeOperation = 'source-over';
+      overlayCtx.fillStyle = 'rgba(0,0,0,0.65)';
+      overlayCtx.fillRect(0, y, w, barH);
+
+      // 日本語コメント: 危険=白を濃く（0..1）。安全=薄い
+      for (let i = 0; i < HAZARD_BINS; i += 1) {
+        const x0 = Math.floor((i * w) / HAZARD_BINS);
+        const x1 = Math.floor(((i + 1) * w) / HAZARD_BINS);
+        const v = hazard.columns[i];
+        const a = 0.12 + 0.80 * v;
+        overlayCtx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+        overlayCtx.fillRect(x0 + 1, y + 2, Math.max(1, x1 - x0 - 2), barH - 4);
+      }
+
+      // 日本語コメント: 推奨操舵方向（白線）を1本だけ表示
+      const steerX = Math.floor(((hazard.bestSteer + 1) * 0.5) * (w - 1));
+      overlayCtx.strokeStyle = 'rgba(255,255,255,0.95)';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(steerX + 0.5, y + 0.5);
+      overlayCtx.lineTo(steerX + 0.5, y + barH - 0.5);
+      overlayCtx.stroke();
+
+      overlayCtx.restore();
+    }
   } else {
     cvCanvas.style.display = 'none';
-    overlayCanvas.style.display = 'none';
   }
 }
 
@@ -1323,12 +1535,15 @@ function animate() {
   // 日本語コメント: OpenCV初期化＆video準備を待つ
   initCvOnceReady();
 
+  // 日本語コメント: Depthが来ている場合は「単色マップ」を最優先で描画し、エッジ/MLは停止してCPUを空ける
+  const semanticRendered = maybeRenderSemanticMap(nowMs);
+
   // 日本語コメント: CVは間引き実行（描画は毎フレーム）
-  runCvOnce(nowMs);
+  if (!semanticRendered) runCvOnce(nowMs);
 
   // 日本語コメント: 物体検出（COCO-SSD）はさらに低頻度で実行（async）
   // - 失敗してもOpenCV側の障害物推定でフォールバックする
-  runCocoOnce(nowMs);
+  if (!semanticRendered) runCocoOnce(nowMs);
 
   // 日本語コメント: CVの検出結果をトラックへ反映（dtで減衰）
   // 日本語コメント: フリーズ中は「線の減衰」もしない（画面が完全に静止して見える）
@@ -1345,10 +1560,13 @@ function animate() {
   if (nowMs >= state.nextUiAtMs) {
     state.nextUiAtMs = nowMs + 250;
     const ui = document.getElementById('ui');
+    ui.style.display = uiVisible ? 'block' : 'none';
     const vOk = video.videoWidth > 0 ? 'ok' : 'wait';
     const cvOk = state.cvReady ? 'ok' : 'wait';
+    const mode = (semantic.enabled && semantic.latestDepth) ? 'SemanticMap' : 'Edges';
     ui.innerHTML =
       'A-1 Artificial Structure Mapper<br>' +
+      `Mode: ${mode} (S=semantic)<br>` +
       'iPhone Camera → Edges + COCO-SSD → Obstacle<br>' +
       `video: ${vOk} (${video.videoWidth}x${video.videoHeight})<br>` +
       `cv: ${cvOk} (proc ${state.procW}x${state.procH})<br>` +
@@ -1356,11 +1574,15 @@ function animate() {
       `cap: ${state.captureMode}, black: ${state.blackStreak}<br>` +
       `blurMean: ${state.lastBlurMean.toFixed(1)}, grayMean: ${state.lastGrayMean.toFixed(1)}<br>` +
       `edgesNZ: ${state.lastEdgeNZ}<br>` +
+      `steer: ${hazard.bestSteer.toFixed(2)} (L=-1..R=+1)<br>` +
       `obsScore: ${state.lastObstacleScore.toFixed(0)}<br>` +
       `ml: ${state.mlEnabled ? (state.mlReady ? 'on' : 'loading') : 'off'} (M), cls: ${state.mlLastClass}, p: ${state.mlLastScore.toFixed(2)}<br>` +
+      (semantic.latestDepth
+        ? `semantic: safe=${semantic.stats.safe} obs=${semantic.stats.obstacle} unk=${semantic.stats.unknown}<br>`
+        : 'semantic: waiting Depth(Float32Array 640x480[m])<br>') +
       `fps: ${state.fps}<br>` +
       `freeze: ${state.frozen ? 'ON' : 'OFF'} (Space / double-tap)<br>` +
-      'tip: M=COCO-SSD / D=edges / C=cap / Space=freeze';
+      'tip: S=semantic / U=UI / M=COCO-SSD / D=edges';
   }
 }
 
@@ -1390,6 +1612,12 @@ window.addEventListener('keydown', (ev) => {
 });
 
 window.addEventListener('keydown', (ev) => {
+  if (ev.code !== 'KeyU') return;
+  // 日本語コメント: Agent browserのVisionを邪魔しないよう、UIは必要時だけ表示
+  uiVisible = !uiVisible;
+});
+
+window.addEventListener('keydown', (ev) => {
   if (ev.code !== 'KeyC') return;
   // 日本語コメント: キャプチャ方式の強制切替（VideoCaptureが黒になる環境向け）
   state.captureMode = state.captureMode === 'videoCapture' ? 'canvas' : 'videoCapture';
@@ -1412,6 +1640,13 @@ window.addEventListener('keydown', (ev) => {
     state.mlLastBox = null;
     state.lastObstacleScore = 0;
   }
+});
+
+window.addEventListener('keydown', (ev) => {
+  if (ev.code !== 'KeyS') return;
+  // 日本語コメント: Semantic Map（単色マップ）のON/OFF
+  // - Depthが来ている場合はCV/MLを止めて「単色だけ」を表示する（Agentの認識を最優先）
+  semantic.enabled = !semantic.enabled;
 });
 
 window.addEventListener('keydown', (ev) => {
