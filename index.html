@@ -49,6 +49,9 @@ iPhone Camera → Edges + COCO-SSD → Obstacle
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 <script src="./semantic-map.js"></script>
+<script src="./speech-greeting.js"></script>
+<script src="./robot-control.js"></script>
+<script src="./gemini-nano.js"></script>
 
 <script>
 // Optimization summary:
@@ -329,14 +332,14 @@ document.getElementById('ui').style.display = uiVisible ? 'block' : 'none';
 // 日本語コメント: COCO-SSDの対象クラス（必要なら調整）
 // - 「避けるべき障害物」を想定して、人工物中心でフィルタ
 // - personは“人工物のみ”の制約に合わせてデフォルト除外（必要ならtrueへ）
-const ML_ALLOW_PERSON = false;
+const ML_ALLOW_PERSON = true;
 const ML_ALLOWED = new Set([
   'chair', 'couch', 'bed', 'dining table',
   'tv', 'laptop', 'keyboard', 'mouse',
   'refrigerator', 'microwave', 'oven', 'sink',
   'toilet', 'potted plant', // 室内障害物としては有用（植物は人工物でないが障害物になりうる）
   'bottle', 'cup', 'backpack', 'suitcase',
-  'book', 'vase',
+  'book', 'vase', 'dog', 'cat', 'bird', 'horse', 'cow', 'elephant', 'bear',
 ]);
 
 let tfRef = null;
@@ -453,6 +456,10 @@ async function runCocoOnce(nowMs) {
   state.mlLastBox = { x, y, w, h };
   // 日本語コメント: UI用の障害物スコア（比較値）を保持
   state.lastObstacleScore = Math.round((best._score || 0) * 1000);
+  // 音声挨拶
+  if (typeof autoGreetDetection === 'function') {
+    autoGreetDetection();
+  }
   state.mlInFlight = false;
 }
 
@@ -1556,6 +1563,11 @@ function animate() {
     renderer.render(scene, camera3D);
   }
 
+  // ロボット制御更新
+  if (typeof updateRobotControl === 'function') {
+    updateRobotControl(nowMs);
+  }
+
   // 日本語コメント: 「何も起きない」時の切り分け用に、最低限の状態をUIへ表示
   if (nowMs >= state.nextUiAtMs) {
     state.nextUiAtMs = nowMs + 250;
@@ -1577,12 +1589,14 @@ function animate() {
       `steer: ${hazard.bestSteer.toFixed(2)} (L=-1..R=+1)<br>` +
       `obsScore: ${state.lastObstacleScore.toFixed(0)}<br>` +
       `ml: ${state.mlEnabled ? (state.mlReady ? 'on' : 'loading') : 'off'} (M), cls: ${state.mlLastClass}, p: ${state.mlLastScore.toFixed(2)}<br>` +
+      `speech: ${typeof speech !== 'undefined' && speech.enabled ? (speech.speaking ? '🔊' : '🔇') : 'OFF'} (H/T)<br>` +
+      `robot: ${typeof robot !== 'undefined' && robot.connected ? '🤖' : 'OFF'} (R/O/X)<br>` +
       (semantic.latestDepth
         ? `semantic: safe=${semantic.stats.safe} obs=${semantic.stats.obstacle} unk=${semantic.stats.unknown}<br>`
         : 'semantic: waiting Depth(Float32Array 640x480[m])<br>') +
       `fps: ${state.fps}<br>` +
       `freeze: ${state.frozen ? 'ON' : 'OFF'} (Space / double-tap)<br>` +
-      'tip: S=semantic / U=UI / M=COCO-SSD / D=edges';
+      'tip: S=semantic / U=UI / M=COCO-SSD / D=edges / H=speech / R=robot / G=AI';
   }
 }
 
