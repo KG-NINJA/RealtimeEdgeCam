@@ -14,6 +14,23 @@ body { margin:0; background:#000; overflow:hidden; }
   background:rgba(0,0,0,0.6);
   padding:6px;
 }
+#ml-btn {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  padding: 8px 10px;
+  font-family: monospace;
+  font-size: 12px;
+  color: #0f0;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid #0f0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  #ml-btn:hover { background: rgba(0, 64, 0, 0.8); }
+}
 /* 日本語コメント: display:noneだとブラウザによってはデコード/フレーム更新が止まることがあるため、画面外に退避する */
 video {
   position: fixed;
@@ -42,6 +59,8 @@ canvas {
 A-1 Artificial Structure Mapper<br>
 iPhone Camera → Edges + COCO-SSD → Obstacle
 </div>
+
+<button id="ml-btn" type="button">COCO-SSD: OFF</button>
 
 <video id="video" autoplay playsinline></video>
 <canvas id="cv"></canvas>
@@ -91,6 +110,7 @@ const cvCanvas = document.getElementById('cv');
 // 日本語コメント: VideoCaptureを使うため、CanvasのdrawImage→imreadは不要（CPU/メモリの節約）
 // 日本語コメント: Agent browserのVisionが「1枚の画」として取りやすいよう、エッジ＋BBoxは同一canvasに合成する
 const overlayCtx = cvCanvas.getContext('2d');
+const mlBtn = document.getElementById('ml-btn');
 
 /* ===== Semantic Map（Depth→単色） ===== */
 // 日本語コメント:
@@ -345,6 +365,34 @@ const ML_ALLOWED = new Set([
 let tfRef = null;
 let cocoRef = null;
 
+function updateMlButton() {
+  if (!mlBtn) return;
+  const status = state.mlEnabled
+    ? (state.mlReady ? 'ON' : 'Loading...')
+    : 'OFF';
+  mlBtn.textContent = `COCO-SSD: ${status}`;
+  mlBtn.disabled = state.mlLoading;
+  mlBtn.style.opacity = state.mlEnabled ? '1' : '0.85';
+}
+
+function toggleMl() {
+  state.mlEnabled = !state.mlEnabled;
+  if (state.mlEnabled) {
+    ensureCocoSsdLoaded().catch(() => {
+      state.mlEnabled = false;
+      state.mlReady = false;
+      state.mlLoading = false;
+      updateMlButton();
+    });
+  } else {
+    state.mlLastClass = '';
+    state.mlLastScore = 0;
+    state.mlLastBox = null;
+    state.lastObstacleScore = 0;
+  }
+  updateMlButton();
+}
+
 function loadScriptOnce(src) {
   // 日本語コメント: 単体HTMLのまま、必要時だけ外部JSを読み込む（初期ロード/CPU/メモリを守る）
   return new Promise((resolve, reject) => {
@@ -370,6 +418,7 @@ async function ensureCocoSsdLoaded() {
   if (state.mlReady) return;
   if (state.mlLoading) return;
   state.mlLoading = true;
+  updateMlButton();
 
   // 日本語コメント: CDN依存（オフライン不可）。iPhone Safariでも動きやすいliteモデルを使う
   // - tfjs本体
@@ -392,7 +441,18 @@ async function ensureCocoSsdLoaded() {
   state.mlModel = await cocoRef.load({ base: 'lite_mobilenet_v2' });
   state.mlReady = true;
   state.mlLoading = false;
+  updateMlButton();
 }
+
+if (mlBtn) {
+  const handleMlTap = (ev) => {
+    ev.preventDefault();
+    toggleMl();
+  };
+  mlBtn.addEventListener('pointerdown', handleMlTap);
+  mlBtn.addEventListener('click', (ev) => ev.preventDefault());
+}
+updateMlButton();
 
 function shouldKeepMlClass(name) {
   if (name === 'person') return ML_ALLOW_PERSON;
@@ -1641,19 +1701,7 @@ window.addEventListener('keydown', (ev) => {
 window.addEventListener('keydown', (ev) => {
   if (ev.code !== 'KeyM') return;
   // 日本語コメント: COCO-SSDのON/OFF（重いので明示的に有効化）
-  state.mlEnabled = !state.mlEnabled;
-  if (state.mlEnabled) {
-    ensureCocoSsdLoaded().catch(() => {
-      state.mlEnabled = false;
-      state.mlReady = false;
-      state.mlLoading = false;
-    });
-  } else {
-    state.mlLastClass = '';
-    state.mlLastScore = 0;
-    state.mlLastBox = null;
-    state.lastObstacleScore = 0;
-  }
+  toggleMl();
 });
 
 window.addEventListener('keydown', (ev) => {
