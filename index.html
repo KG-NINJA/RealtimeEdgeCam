@@ -168,6 +168,7 @@ body {
     <span style="color: #0f0;">Space</span> = Freeze<br>
     <span style="color: #0f0;">W/A/S/D</span> = Manual<br>
     <span style="color: #0f0;">G</span> = Ask Gemma<br>
+    <span style="color: #ff0;">T</span> = Test Gemma<br>
   </div>
 </div>
 
@@ -511,86 +512,101 @@ async function askGemmaDecision(nowMs) {
   if (nowMs < state.gemmaNextAtMs) return;
   state.gemmaNextAtMs = nowMs + state.gemmaIntervalMs;
 
-  const obs = {
-    obstacle_score: state.lastObstacleScore / 1000.0,
-    detected_class: state.mlLastClass || 'unknown',
-    confidence: state.mlLastScore,
-    has_obstacle: state.lastObstacleScore > 500,
+  // Hugging Face API の期待する形式に合わせる
+  const sensorData = {
+    front_distance: Math.max(0, Math.min(1, 1.0 - (state.lastObstacleScore / 1000.0))), // 0-1 (1=safe, 0=obstacle)
+    speed: state.robotVLin || 0.0
   };
 
   updateStatus('gemma-status', 'Asking...', 'warn');
-  console.log('📤 Gemma Request:', JSON.stringify(obs, null, 2));
+  addDebugLog('📤 Gemma Request: ' + JSON.stringify(sensorData));
 
   try {
     const url = 'https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide';
-    console.log('🌐 Calling:', url);
+    addDebugLog(`🌐 POST ${url}`);
     
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(obs)
-    });
+    const res = await Promise.race([
+      fetch(url, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(sensorData)
+      }),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout (5s)')), 5000)
+      )
+    ]);
 
-    console.log('📨 Response Status:', res.status, res.statusText);
+    addDebugLog(`📨 HTTP ${res.status} ${res.statusText}`);
     
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      // ステータスコードがエラーの場合、詳細情報を取得
+      const errorText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errorText.substring(0, 100)}`);
     }
 
     const text = await res.text();
-    console.log('📥 Raw Response:', text);
+    addDebugLog('📥 Raw Response: ' + text.substring(0, 300));
     
     let decision;
     try {
       decision = JSON.parse(text);
     } catch (e) {
-      console.error('❌ JSON Parse Error:', e, 'Raw:', text);
-      throw new Error('Invalid JSON response: ' + text.substring(0, 100));
+      addDebugLog('⚠️ JSON Parse failed, trying to extract JSON from response');
+      // JSON が埋め込まれている可能性があるので抽出を試みる
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        decision = JSON.parse(jsonMatch[0]);
+        addDebugLog('✅ Extracted JSON: ' + JSON.stringify(decision));
+      } else {
+        throw new Error('No valid JSON in response: ' + text.substring(0, 100));
+      }
     }
 
-    console.log('✅ Parsed Decision:', decision);
+    addDebugLog('✅ Parsed Decision: ' + JSON.stringify(decision));
     applyGemmaDecision(decision);
     state.gemmaLastDecision = decision.action || 'unknown';
     updateStatus('gemma-status', `${decision.action || 'ready'}`, 'good');
   } catch (e) {
-    console.error('❌ Gemma Error:', e.message);
+    addDebugLog('❌ Gemma Error: ' + e.message);
     updateStatus('gemma-status', `Error: ${e.message.substring(0, 25)}`, 'bad');
   }
 }
 
 function applyGemmaDecision(d) {
   if (!d || !state.robotEnabled) {
-    console.log('⏭️  Robot disabled or no decision');
+    addDebugLog('⏭️  Robot disabled or no decision');
     return;
   }
 
   const action = d.action || d.command || d.move;
-  console.log('🤖 Applying action:', action);
+  const speed = d.speed || 0.3; // フォールバック速度
+  
+  addDebugLog('🤖 Applying action: ' + action + ' (speed: ' + speed.toFixed(2) + ')');
 
-  switch (String(action).toLowerCase()) {
+  switch (String(action).toLowerCase().trim()) {
     case 'move_forward':
     case 'move forward':
     case 'forward':
-      console.log('➡️  Moving forward');
-      sendRobotCommand(0.3, 0);
+      addDebugLog('➡️  Moving forward');
+      sendRobotCommand(speed, 0);
       break;
     case 'turn_left':
     case 'turn left':
     case 'left':
-      console.log('⬅️  Turning left');
-      sendRobotCommand(0.15, 0.5);
+      addDebugLog('⬅️  Turning left');
+      sendRobotCommand(speed * 0.5, 0.5);
       break;
     case 'turn_right':
     case 'turn right':
     case 'right':
-      console.log('➡️  Turning right');
-      sendRobotCommand(0.15, -0.5);
+      addDebugLog('➡️  Turning right');
+      sendRobotCommand(speed * 0.5, -0.5);
       break;
     case 'stop':
     default:
-      console.log('⏹️  Stopping');
+      addDebugLog('⏹️  Stopping');
       emergencyStop();
   }
 }
@@ -731,12 +747,35 @@ window.addEventListener('keydown', (ev) => {
     emergencyStop();
   } else if (ev.code === 'KeyD') {
     state.debugEdges = !state.debugEdges;
+  } else if (ev.code === 'KeyG') {
+    askGemmaDecision(performance.now());
+  } else if (ev.code === 'KeyT') {
+    testGemmaWithMockResponse();
   }
 });
 
 window.addEventListener('keyup', (ev) => {
   keys[ev.code] = false;
 });
+
+// テスト用：モックレスポンス
+function testGemmaWithMockResponse() {
+  addDebugLog('🧪 Testing with mock response');
+  
+  const mockDecisions = [
+    { action: 'move_forward' },
+    { action: 'turn_left' },
+    { action: 'turn_right' },
+    { action: 'stop' }
+  ];
+  
+  const randomDecision = mockDecisions[Math.floor(Math.random() * mockDecisions.length)];
+  
+  addDebugLog('🎲 Mock Decision: ' + JSON.stringify(randomDecision));
+  applyGemmaDecision(randomDecision);
+  state.gemmaLastDecision = randomDecision.action;
+  updateStatus('gemma-status', randomDecision.action, 'good');
+}
 
 /* ==================== メインループ ==================== */
 let lastCvAt = 0;
