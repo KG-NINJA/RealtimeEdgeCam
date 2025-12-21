@@ -211,7 +211,7 @@ const state = {
   
   gemmaLastDecision: '',
   gemmaNextAtMs: 0,
-  gemmaIntervalMs: 800,
+  gemmaIntervalMs: 2000,  // 2秒間隔に延長（API呼び出しを減らす）
 };
 
 const ML_ALLOWED = new Set([
@@ -503,13 +503,14 @@ async function askGemmaDecision(nowMs) {
   if (nowMs < state.gemmaNextAtMs) return;
   state.gemmaNextAtMs = nowMs + state.gemmaIntervalMs;
 
+  // ✅ Hugging Face API の期待する形式
   const sensorData = {
-    front_distance: Math.max(0, Math.min(1, 1.0 - (state.lastObstacleScore / 1000.0))),
-    speed: state.robotVLin || 0.0
+    front_distance: parseFloat((Math.max(0, Math.min(1, 1.0 - (state.lastObstacleScore / 1000.0)))).toFixed(2)),
+    speed: parseFloat((state.robotVLin || 0.0).toFixed(2))
   };
 
   updateStatus('gemma-status', 'Asking...', 'warn');
-  console.log('Gemma Request:', sensorData);
+  console.log('Gemma Request:', JSON.stringify(sensorData));
 
   try {
     const url = 'https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide';
@@ -520,15 +521,18 @@ async function askGemmaDecision(nowMs) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sensorData)
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000))
     ]);
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error('HTTP ' + res.status + ': ' + err.substring(0, 50));
+      console.log('Response status:', res.status, 'Body:', err.substring(0, 100));
+      throw new Error('HTTP ' + res.status);
     }
 
     const text = await res.text();
+    console.log('Raw response:', text.substring(0, 200));
+    
     let decision = JSON.parse(text);
     
     console.log('Gemma Response:', decision);
