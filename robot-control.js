@@ -168,3 +168,30 @@
 
   window.updateRobotControl = updateRobotControl;
 })();
+const API = "https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide";
+
+document.getElementById("testDecision").onclick = async () => {
+  const observation = {
+    detected: ["person"],
+    confidence: Math.random()
+  };
+
+  try {
+    const res = await fetch(API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(observation)
+    });
+
+    const data = await res.json();
+    console.log("REACTION:", data);
+
+    document.getElementById("reactionLog").textContent =
+      JSON.stringify(data, null, 2);
+
+  } catch (e) {
+    console.error("API ERROR", e);
+    document.getElementById("reactionLog").textContent =
+      "ERROR: " + e.message;
+  }
+};
