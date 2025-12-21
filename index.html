@@ -211,7 +211,7 @@ const state = {
   
   gemmaLastDecision: '',
   gemmaNextAtMs: 0,
-  gemmaIntervalMs: 2000,  // 2秒間隔に延長（API呼び出しを減らす）
+  gemmaIntervalMs: 5000,  // 5秒間隔に延長（API呼び出しを減らす）
 };
 
 const ML_ALLOWED = new Set([
@@ -521,7 +521,7 @@ async function askGemmaDecision(nowMs) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sensorData)
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 60000))  // 60秒に延長
     ]);
 
     if (!res.ok) {
