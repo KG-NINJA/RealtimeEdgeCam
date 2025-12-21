@@ -1,209 +1,170 @@
-(() => {
-  "use strict";
+// 日本語コメント: ロボット制御抽象レイヤー＋Canvasシミュレーター
+(function () {
+  'use strict';
 
-  /* ===============================
-     設定・定数
-  =============================== */
+  /* ===== 定数 ===== */
 
-  const DECISION_API =
+  var MAX_LINEAR = 0.5;
+  var MAX_ANGULAR = 1.0;
+  var DT_MS = 100;
+  var SIM_SIZE = 400;
+
+  var DECISION_API =
     "https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide";
 
-  const DT = 0.016; // 60fps
-  const DECISION_INTERVAL = 300; // ms
+  var DECISION_INTERVAL = 300;
+  var lastDecisionAt = 0;
 
-  let lastDecisionAt = 0;
+  /* ===== ロボット状態 ===== */
 
-  /* ===============================
-     ロボット状態（唯一の真実）
-  =============================== */
-
-  const robot = {
-    x: 200,
-    y: 200,
+  var robot = {
+    connected: false,
+    controlEnabled: false, // R
+    autoMode: true,        // O
+    x: SIM_SIZE / 2,
+    y: SIM_SIZE / 2,
     theta: 0,
-
     vLin: 0,
     vAng: 0,
-
-    running: false, // Uキー
-    auto: false,    // Oキー
+    trail: [],
+    lastUpdate: 0,
   };
 
-  /* ===============================
-     入力状態
-  =============================== */
+  var simCanvas = null;
+  var simCtx = null;
+  var keys = {};
 
-  const keys = {
-    w: false,
-    a: false,
-    s: false,
-    d: false,
-  };
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-  /* ===============================
-     キー入力
-  =============================== */
+  /* ===== Canvas ===== */
 
-  window.addEventListener("keydown", (e) => {
-    const k = e.key.toLowerCase();
-
-    if (k === "u") {
-      robot.running = !robot.running;
-      console.log("RUNNING:", robot.running);
-    }
-    if (k === "o") {
-      robot.auto = !robot.auto;
-      console.log("AUTO:", robot.auto);
-    }
-
-    if (k in keys) keys[k] = true;
-  });
-
-  window.addEventListener("keyup", (e) => {
-    const k = e.key.toLowerCase();
-    if (k in keys) keys[k] = false;
-  });
-
-  /* ===============================
-     手動操作
-  =============================== */
-
-  function manualControlStep() {
-    let v = 0;
-    let w = 0;
-
-    if (keys.w) v += 0.4;
-    if (keys.s) v -= 0.2;
-    if (keys.a) w -= 2.0;
-    if (keys.d) w += 2.0;
-
-    sendRobotCommand(v, w);
+  function ensureCanvas() {
+    if (simCanvas) return;
+    simCanvas = document.createElement('canvas');
+    simCanvas.width = SIM_SIZE;
+    simCanvas.height = SIM_SIZE;
+    simCanvas.style.position = 'fixed';
+    simCanvas.style.right = '10px';
+    simCanvas.style.bottom = '10px';
+    simCanvas.style.border = '1px solid #0af';
+    simCanvas.style.background = 'rgba(0,0,0,0.7)';
+    simCanvas.style.pointerEvents = 'none';
+    document.body.appendChild(simCanvas);
+    simCtx = simCanvas.getContext('2d');
   }
 
-  /* ===============================
-     AI / API 自律制御
-  =============================== */
+  function drawSimulator() {
+    if (!simCtx) return;
+    simCtx.clearRect(0, 0, SIM_SIZE, SIM_SIZE);
+
+    if (robot.trail.length > 1) {
+      simCtx.strokeStyle = '#0ff';
+      simCtx.beginPath();
+      robot.trail.forEach((p, i) => i ? simCtx.lineTo(p.x, p.y) : simCtx.moveTo(p.x, p.y));
+      simCtx.stroke();
+    }
+
+    simCtx.save();
+    simCtx.translate(robot.x, robot.y);
+    simCtx.rotate(robot.theta);
+    simCtx.fillStyle = robot.controlEnabled ? '#0f0' : '#555';
+    simCtx.beginPath();
+    simCtx.moveTo(12, 0);
+    simCtx.lineTo(-12, -8);
+    simCtx.lineTo(-12, 8);
+    simCtx.closePath();
+    simCtx.fill();
+    simCtx.restore();
+
+    simCtx.fillStyle = '#0ff';
+    simCtx.font = '12px monospace';
+    simCtx.fillText('mode: ' + (robot.autoMode ? 'AUTO' : 'MANUAL') + ' (O)', 8, 16);
+    simCtx.fillText('ctrl: ' + (robot.controlEnabled ? 'ON' : 'OFF') + ' (R)', 8, 32);
+  }
+
+  /* ===== 出口 ===== */
+
+  function sendRobotCommand(lin, ang) {
+    robot.vLin = clamp(lin, -MAX_LINEAR, MAX_LINEAR);
+    robot.vAng = clamp(ang, -MAX_ANGULAR, MAX_ANGULAR);
+    robot.connected = true;
+  }
+
+  function emergencyStop() { sendRobotCommand(0, 0); }
+
+  /* ===== 自律制御 ===== */
 
   async function autoControlStep() {
-    const now = performance.now();
+    var now = performance.now();
     if (now - lastDecisionAt < DECISION_INTERVAL) return;
     lastDecisionAt = now;
 
-    // シンプルな疑似センサー（後で差し替え可）
-    const obstacleRatio = Math.random(); // デモ用
-
     try {
-      const res = await fetch(DECISION_API, {
+      var res = await fetch(DECISION_API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          front_distance: 1.0 - obstacleRatio,
-          speed: robot.vLin,
-        }),
+          front_distance: Math.random(),
+          speed: robot.vLin
+        })
       });
 
-      if (!res.ok) throw new Error("API error");
-      const d = await res.json();
+      var d = await res.json();
 
-      switch (d.action) {
-        case "move_forward":
-          sendRobotCommand(d.speed ?? 0.3, 0);
-          break;
-        case "turn_left":
-          sendRobotCommand(0.2, 1.0);
-          break;
-        case "turn_right":
-          sendRobotCommand(0.2, -1.0);
-          break;
-        case "stop":
-        default:
-          sendRobotCommand(0, 0);
-          break;
-      }
-    } catch (err) {
-      console.warn("Decision API failed → STOP", err);
-      sendRobotCommand(0, 0);
+      if (d.action === "move_forward") sendRobotCommand(d.speed || 0.3, 0);
+      else if (d.action === "turn_left") sendRobotCommand(0.2, 0.6);
+      else if (d.action === "turn_right") sendRobotCommand(0.2, -0.6);
+      else emergencyStop();
+
+    } catch {
+      emergencyStop();
     }
   }
 
-  /* ===============================
-     出力（唯一の制御出口）
-  =============================== */
-
-  function sendRobotCommand(v, w) {
-    robot.vLin = v;
-    robot.vAng = w;
+  function handleManualKeys() {
+    var lin = 0, ang = 0;
+    if (keys.KeyW) lin += 1;
+    if (keys.KeyS) lin -= 1;
+    if (keys.KeyA) ang += 1;
+    if (keys.KeyD) ang -= 1;
+    sendRobotCommand(lin * MAX_LINEAR, ang * MAX_ANGULAR);
   }
 
-  /* ===============================
-     物理更新
-  =============================== */
+  /* ===== 入力 ===== */
 
-  function updateWorld(dt) {
+  window.addEventListener('keydown', function (ev) {
+    if (ev.code === 'KeyR') robot.controlEnabled = !robot.controlEnabled;
+    else if (ev.code === 'KeyO') robot.autoMode = !robot.autoMode;
+    else if (ev.code === 'KeyX') emergencyStop();
+    keys[ev.code] = true;
+  });
+
+  window.addEventListener('keyup', function (ev) {
+    keys[ev.code] = false;
+  });
+
+  /* ===== 更新 ===== */
+
+  function updateRobotControl(now) {
+    if (!robot.controlEnabled) return;
+    ensureCanvas();
+
+    if (now - robot.lastUpdate < DT_MS) return;
+    robot.lastUpdate = now;
+
+    if (robot.autoMode) autoControlStep();
+    else handleManualKeys();
+
+    var dt = DT_MS / 1000;
     robot.theta += robot.vAng * dt;
-    robot.x += Math.cos(robot.theta) * robot.vLin * 100 * dt;
-    robot.y += Math.sin(robot.theta) * robot.vLin * 100 * dt;
+    robot.x = clamp(robot.x + Math.cos(robot.theta) * robot.vLin * dt * 80, 10, SIM_SIZE - 10);
+    robot.y = clamp(robot.y + Math.sin(robot.theta) * robot.vLin * dt * 80, 10, SIM_SIZE - 10);
+
+    robot.trail.push({ x: robot.x, y: robot.y });
+    if (robot.trail.length > 400) robot.trail.shift();
+
+    drawSimulator();
   }
 
-  /* ===============================
-     メイン制御
-  =============================== */
-
-  function updateRobotControl() {
-    if (!robot.running) {
-      sendRobotCommand(0, 0);
-      return;
-    }
-
-    if (robot.auto) {
-      autoControlStep();
-    } else {
-      manualControlStep();
-    }
-  }
-
-  /* ===============================
-     描画（最低限）
-  =============================== */
-
-  const canvas = document.getElementById("canvas");
-  const ctx = canvas.getContext("2d");
-
-  function render() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    ctx.save();
-    ctx.translate(robot.x, robot.y);
-    ctx.rotate(robot.theta);
-
-    ctx.fillStyle = robot.auto ? "#4ade80" : "#60a5fa";
-    ctx.beginPath();
-    ctx.moveTo(20, 0);
-    ctx.lineTo(-10, -10);
-    ctx.lineTo(-10, 10);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.restore();
-
-    ctx.fillStyle = "#fff";
-    ctx.fillText(
-      `RUN:${robot.running} AUTO:${robot.auto}`,
-      10,
-      20
-    );
-  }
-
-  /* ===============================
-     ループ
-  =============================== */
-
-  function loop() {
-    updateRobotControl();
-    updateWorld(DT);
-    render();
-    requestAnimationFrame(loop);
-  }
-
-  loop();
+  window.updateRobotControl = updateRobotControl;
 })();
