@@ -169,3 +169,37 @@
   window.sendRobotCommand = sendRobotCommand;
   window.updateRobotControl = updateRobotControl;
 })();
+const DECISION_API =
+  "https://YOUR-SPACE-NAME.hf.space/decide";
+
+async function sendDecisionRequest(data) {
+  try {
+    const res = await fetch(DECISION_API, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!res.ok) throw new Error("API error");
+
+    const decision = await res.json();
+    handleDecision(decision);
+
+  } catch (err) {
+    console.error("Decision API failed", err);
+  }
+}
+
+function handleDecision(decision) {
+  console.log("AI Decision:", decision);
+
+  // ロボット制御 or UI反映
+  if (decision.action === "STOP") {
+    speak("Stopping");
+  }
+  if (decision.action === "STEER") {
+    speak("Avoiding obstacle");
+  }
+}
