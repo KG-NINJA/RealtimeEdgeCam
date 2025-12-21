@@ -1,33 +1,30 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8" />
-<title>Robot Decision Demo (Camera → HF)</title>
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta charset="utf-8">
+<title>Camera + COCO-SSD + Gemma</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  body {
-    margin: 0;
-    background: #000;
-    color: #0ff;
-    font-family: monospace;
-  }
-  #video {
+  body { margin:0; background:#000; color:#0ff; font-family:monospace; }
+  video {
     position: fixed;
     right: 10px;
     bottom: 10px;
     width: 240px;
     border: 1px solid #345;
-    opacity: 0.9;
   }
-  #overlay {
+  canvas {
+    position: fixed;
+    left: 0;
+    top: 0;
+  }
+  #hud {
     position: fixed;
     left: 10px;
     top: 10px;
-    background: rgba(0,0,0,0.6);
+    background: rgba(0,0,0,.6);
     padding: 8px;
     border: 1px solid #0af;
-  }
-  #log {
     white-space: pre-wrap;
     font-size: 12px;
   }
@@ -36,41 +33,38 @@
 
 <body>
 
-<div id="overlay">
-  <div>Robot Decision Demo</div>
-  <div>G: Ask Gemma</div>
-  <div id="log"></div>
-</div>
+<div id="hud">Loading...</div>
 
 <video id="video" autoplay playsinline muted></video>
-<canvas id="grab" width="160" height="120" style="display:none;"></canvas>
+<canvas id="canvas"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
 <script>
-/* =========================
+/* =======================
    設定
-========================= */
+======================= */
 const DECISION_API =
   "https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide";
 
-/* =========================
-   要素取得
-========================= */
+/* =======================
+   要素
+======================= */
 const video = document.getElementById("video");
-const grab = document.getElementById("grab");
-const gctx = grab.getContext("2d");
-const logEl = document.getElementById("log");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const hud = document.getElementById("hud");
 
-/* =========================
-   ログ表示
-========================= */
-function log(msg, obj) {
-  logEl.textContent =
-    msg + (obj ? "\n" + JSON.stringify(obj, null, 2) : "");
-}
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-/* =========================
-   カメラ起動（ユーザー操作後）
-========================= */
+let model = null;
+let lastDetections = [];
+
+/* =======================
+   カメラ起動（クリック必須）
+======================= */
 async function startCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: "environment" },
@@ -78,68 +72,98 @@ async function startCamera() {
   });
   video.srcObject = stream;
   await video.play();
-  log("Camera started");
+  hud.textContent = "Camera started\nLoading COCO-SSD...";
+  model = await cocoSsd.load();
+  hud.textContent = "COCO-SSD ready\nPress G to ask Gemma";
 }
 
 document.body.addEventListener("click", startCamera, { once: true });
 
-/* =========================
-   映像 → 数値化（最小）
-   中央輝度 = front_distance
-========================= */
-function computeFrontDistance() {
-  gctx.drawImage(video, 0, 0, grab.width, grab.height);
-
-  const cx = grab.width / 2 - 5;
-  const cy = grab.height / 2 - 5;
-  const img = gctx.getImageData(cx, cy, 10, 10);
-
-  let sum = 0;
-  for (let i = 0; i < img.data.length; i += 4) {
-    sum += img.data[i]; // R値
+/* =======================
+   検出ループ
+======================= */
+async function detectLoop() {
+  if (model && video.videoWidth > 0) {
+    lastDetections = await model.detect(video);
   }
-  const avg = sum / (img.data.length / 4);
-  return avg / 255; // 0.0〜1.0
+  requestAnimationFrame(detectLoop);
+}
+detectLoop();
+
+/* =======================
+   描画ループ
+======================= */
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  if (video.videoWidth > 0) {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  }
+
+  ctx.strokeStyle = "#0f0";
+  ctx.lineWidth = 2;
+  ctx.font = "16px monospace";
+
+  for (const d of lastDetections) {
+    const [x,y,w,h] = d.bbox;
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillText(
+      `${d.class} ${(d.score*100).toFixed(1)}%`,
+      x, y > 20 ? y-5 : y+20
+    );
+  }
+
+  requestAnimationFrame(draw);
+}
+draw();
+
+/* =======================
+   危険度 → front_distance
+======================= */
+function computeFrontDistance() {
+  if (lastDetections.length === 0) return 1.0;
+
+  let danger = 0;
+  for (const d of lastDetections) {
+    if (["person","chair","table","tv","laptop"].includes(d.class)) {
+      danger = Math.max(danger, d.score);
+    }
+  }
+  return 1.0 - danger;
 }
 
-/* =========================
-   観測データ構築
-========================= */
-function buildObservation() {
-  return {
-    front_distance: computeFrontDistance(),
-    speed: 0.0
-  };
-}
-
-/* =========================
-   Gemma に判断させる
-========================= */
+/* =======================
+   Gemma に送信
+======================= */
 async function askGemma() {
-  const obs = buildObservation();
-  log("SEND TO GEMMA", obs);
+  const front = computeFrontDistance();
+  const payload = {
+    front_distance: front,
+    speed: 0
+  };
+
+  hud.textContent =
+    "SEND TO GEMMA\n" + JSON.stringify(payload, null, 2);
 
   try {
     const res = await fetch(DECISION_API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(obs)
+      body: JSON.stringify(payload)
     });
-
-    const decision = await res.json();
-    log("GEMMA RESPONSE", decision);
+    const json = await res.json();
+    hud.textContent =
+      "GEMMA RESPONSE\n" + JSON.stringify(json, null, 2);
   } catch (e) {
-    log("ERROR", String(e));
+    hud.textContent = "ERROR\n" + e;
   }
 }
 
-/* =========================
-   Gキーで送信
-========================= */
-window.addEventListener("keydown", (e) => {
-  if (e.code === "KeyG") {
-    askGemma();
-  }
+/* =======================
+   Gキー
+======================= */
+window.addEventListener("keydown", e => {
+  if (e.code === "KeyG") askGemma();
 });
 </script>
 
