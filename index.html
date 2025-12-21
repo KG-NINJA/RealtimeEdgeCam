@@ -165,19 +165,6 @@ body {
     <span style="color: #0f0;">G</span> = Ask Gemma<br>
     <span style="color: #ff0;">T</span> = Test Gemma<br>
   </div>
-
-  <div class="controls">
-    <b>⌨️ 操作キー:</b><br>
-    <span style="color: #0f0;">M</span> = ML ON/OFF<br>
-    <span style="color: #0f0;">R</span> = Robot ON/OFF<br>
-    <span style="color: #0f0;">O</span> = Auto/Manual<br>
-    <span style="color: #0f0;">X</span> = Emergency Stop<br>
-    <span style="color: #0f0;">D</span> = Edge Display<br>
-    <span style="color: #0f0;">Space</span> = Freeze<br>
-    <span style="color: #0f0;">W/A/S/D</span> = Manual<br>
-    <span style="color: #0f0;">G</span> = Ask Gemma<br>
-    <span style="color: #ff0;">T</span> = Test Gemma<br>
-  </div>
 </div>
 
 <div id="fps-counter">
@@ -238,6 +225,15 @@ const ML_ALLOWED = new Set([
 const video = document.getElementById('video');
 const cvCanvas = document.getElementById('cv');
 
+/* ==================== UI更新 ==================== */
+function updateStatus(id, text, className) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.textContent = text;
+    el.className = 'status-' + className;
+  }
+}
+
 /* ==================== カメラ初期化 ==================== */
 async function initCamera() {
   try {
@@ -256,20 +252,18 @@ async function initCamera() {
     return new Promise((resolve) => {
       video.onloadedmetadata = () => {
         video.play().catch(e => console.error('Play error:', e));
-        updateStatus('camera-status', `Ready (${video.videoWidth}x${video.videoHeight})`, 'good');
+        updateStatus('camera-status', 'Ready (' + video.videoWidth + 'x' + video.videoHeight + ')', 'good');
         resolve();
       };
     });
   } catch (err) {
     console.error('Camera error:', err);
-    updateStatus('camera-status', `Error: ${err.name}`, 'bad');
+    updateStatus('camera-status', 'Error: ' + err.name, 'bad');
     throw err;
   }
 }
 
 /* ==================== OpenCV初期化 ==================== */
-let cap = null;
-let srcRGBA = null;
 let procRGBA = null;
 let gray = null;
 let blur = null;
@@ -290,13 +284,11 @@ function initOpenCV() {
   if (!cv || !cv.Mat) return;
   if (video.videoWidth === 0) return;
 
-  // ビデオサイズが変わったかチェック
   if (lastVideoW === video.videoWidth && lastVideoH === video.videoHeight && state.cvReady) {
     return;
   }
 
   try {
-    // 古いMatをクリーンアップ
     cleanupMatrices();
 
     lastVideoW = video.videoWidth;
@@ -311,7 +303,6 @@ function initOpenCV() {
     cvCanvas.width = state.procW;
     cvCanvas.height = state.procH;
 
-    // 処理用Matだけを作成（VideoCapture.read()は使わない）
     procRGBA = new cv.Mat(state.procH, state.procW, cv.CV_8UC4);
     gray = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
     blur = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
@@ -321,12 +312,12 @@ function initOpenCV() {
     if (!dilateKernel) dilateKernel = cv.Mat.ones(3, 3, cv.CV_8U);
 
     state.cvReady = true;
-    updateStatus('camera-status', `Ready (${state.videoW}x${state.videoH})`, 'good');
-    console.log('OpenCV initialized:', state.videoW, 'x', state.videoH);
+    updateStatus('camera-status', 'OpenCV Ready', 'good');
+    console.log('OpenCV initialized');
   } catch (e) {
     console.error('OpenCV init error:', e);
     state.cvReady = false;
-    updateStatus('camera-status', 'Error: ' + e.message, 'bad');
+    updateStatus('camera-status', 'Error', 'bad');
   }
 }
 
@@ -336,12 +327,10 @@ let captureCtx = null;
 
 function runCvOnce() {
   if (!state.cvReady || state.frozen) return;
-  if (video.readyState !== 4) return; // HAVE_ENOUGH_DATA
+  if (video.readyState !== 4) return;
 
   try {
-    // ビデオサイズ変更をチェック
     if (video.videoWidth !== lastVideoW || video.videoHeight !== lastVideoH) {
-      console.log('Video size changed, reinitializing OpenCV');
       state.cvReady = false;
       initOpenCV();
       return;
@@ -349,7 +338,6 @@ function runCvOnce() {
 
     if (!procRGBA) return;
 
-    // Canvas経由でビデオをキャプチャ（VideoCapture.read()より安全）
     captureCanvas.width = video.videoWidth;
     captureCanvas.height = video.videoHeight;
     
@@ -360,17 +348,14 @@ function runCvOnce() {
     captureCtx.drawImage(video, 0, 0);
     const imageData = captureCtx.getImageData(0, 0, video.videoWidth, video.videoHeight);
 
-    // ImageDataをOpenCV Matに変換
     let src = cv.matFromImageData(imageData);
     
-    // RGB→グレースケール
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
     cv.GaussianBlur(gray, blur, blurKSize, 1.1, 1.1, cv.BORDER_DEFAULT);
     cv.equalizeHist(blur, gray);
     cv.Canny(gray, edges, 35, 95);
     cv.dilate(edges, edges, dilateKernel);
 
-    // リサイズして表示用に
     cv.resize(edges, procRGBA, new cv.Size(state.procW, state.procH), 0, 0, cv.INTER_AREA);
 
     if (state.debugEdges) {
@@ -379,13 +364,13 @@ function runCvOnce() {
     }
 
     const nz = cv.countNonZero(edges);
-    updateStatus('edge-status', `${nz} pixels`, nz > 100 ? 'good' : 'warn');
+    updateStatus('edge-status', nz + ' pixels', nz > 100 ? 'good' : 'warn');
 
     src.delete();
   } catch (e) {
     console.error('CV error:', e);
     state.cvReady = false;
-    updateStatus('edge-status', 'Error: ' + e.message.substring(0, 40), 'bad');
+    updateStatus('edge-status', 'Error', 'bad');
   }
 }
 
@@ -403,7 +388,7 @@ function drawMlOverlay() {
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, w, h);
 
-  const label = `${state.mlLastClass} ${(state.mlLastScore * 100).toFixed(0)}%`;
+  const label = state.mlLastClass + ' ' + (state.mlLastScore * 100).toFixed(0) + '%';
   ctx.fillStyle = 'rgba(0,255,0,0.8)';
   ctx.fillRect(x, y - 16, 140, 16);
   ctx.fillStyle = '#000';
@@ -421,7 +406,6 @@ async function ensureCocoSsdLoaded() {
   updateStatus('ml-status', 'Loading...', 'warn');
 
   try {
-    // TensorFlow.js
     if (!window.tf) {
       const tfScript = document.createElement('script');
       tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js';
@@ -432,7 +416,6 @@ async function ensureCocoSsdLoaded() {
       });
     }
 
-    // COCO-SSD
     if (!window.cocoSsd) {
       const cocoScript = document.createElement('script');
       cocoScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js';
@@ -458,7 +441,7 @@ async function ensureCocoSsdLoaded() {
   } catch (e) {
     console.error('ML load error:', e);
     state.mlLoading = false;
-    updateStatus('ml-status', `Error: ${e.message}`, 'bad');
+    updateStatus('ml-status', 'Error', 'bad');
   }
 }
 
@@ -520,101 +503,61 @@ async function askGemmaDecision(nowMs) {
   if (nowMs < state.gemmaNextAtMs) return;
   state.gemmaNextAtMs = nowMs + state.gemmaIntervalMs;
 
-  // Hugging Face API の期待する形式に合わせる
   const sensorData = {
-    front_distance: Math.max(0, Math.min(1, 1.0 - (state.lastObstacleScore / 1000.0))), // 0-1 (1=safe, 0=obstacle)
+    front_distance: Math.max(0, Math.min(1, 1.0 - (state.lastObstacleScore / 1000.0))),
     speed: state.robotVLin || 0.0
   };
 
   updateStatus('gemma-status', 'Asking...', 'warn');
-  addDebugLog('📤 Gemma Request: ' + JSON.stringify(sensorData));
+  console.log('Gemma Request:', sensorData);
 
   try {
     const url = 'https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide';
-    addDebugLog(`🌐 POST ${url}`);
     
     const res = await Promise.race([
       fetch(url, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sensorData)
       }),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout (5s)')), 5000)
-      )
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
     ]);
 
-    addDebugLog(`📨 HTTP ${res.status} ${res.statusText}`);
-    
     if (!res.ok) {
-      // ステータスコードがエラーの場合、詳細情報を取得
-      const errorText = await res.text();
-      throw new Error(`HTTP ${res.status}: ${errorText.substring(0, 100)}`);
+      const err = await res.text();
+      throw new Error('HTTP ' + res.status + ': ' + err.substring(0, 50));
     }
 
     const text = await res.text();
-    addDebugLog('📥 Raw Response: ' + text.substring(0, 300));
+    let decision = JSON.parse(text);
     
-    let decision;
-    try {
-      decision = JSON.parse(text);
-    } catch (e) {
-      addDebugLog('⚠️ JSON Parse failed, trying to extract JSON from response');
-      // JSON が埋め込まれている可能性があるので抽出を試みる
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        decision = JSON.parse(jsonMatch[0]);
-        addDebugLog('✅ Extracted JSON: ' + JSON.stringify(decision));
-      } else {
-        throw new Error('No valid JSON in response: ' + text.substring(0, 100));
-      }
-    }
-
-    addDebugLog('✅ Parsed Decision: ' + JSON.stringify(decision));
+    console.log('Gemma Response:', decision);
     applyGemmaDecision(decision);
     state.gemmaLastDecision = decision.action || 'unknown';
-    updateStatus('gemma-status', `${decision.action || 'ready'}`, 'good');
+    updateStatus('gemma-status', decision.action || 'ready', 'good');
   } catch (e) {
-    addDebugLog('❌ Gemma Error: ' + e.message);
-    updateStatus('gemma-status', `Error: ${e.message.substring(0, 25)}`, 'bad');
+    console.error('Gemma Error:', e.message);
+    updateStatus('gemma-status', 'Error', 'bad');
   }
 }
 
 function applyGemmaDecision(d) {
-  if (!d || !state.robotEnabled) {
-    addDebugLog('⏭️  Robot disabled or no decision');
-    return;
-  }
+  if (!d || !state.robotEnabled) return;
 
-  const action = d.action || d.command || d.move;
-  const speed = d.speed || 0.3; // フォールバック速度
-  
-  addDebugLog('🤖 Applying action: ' + action + ' (speed: ' + speed.toFixed(2) + ')');
+  const action = String(d.action || '').toLowerCase();
+  const speed = d.speed || 0.3;
 
-  switch (String(action).toLowerCase().trim()) {
+  switch (action) {
     case 'move_forward':
-    case 'move forward':
-    case 'forward':
-      addDebugLog('➡️  Moving forward');
       sendRobotCommand(speed, 0);
       break;
     case 'turn_left':
-    case 'turn left':
-    case 'left':
-      addDebugLog('⬅️  Turning left');
       sendRobotCommand(speed * 0.5, 0.5);
       break;
     case 'turn_right':
-    case 'turn right':
-    case 'right':
-      addDebugLog('➡️  Turning right');
       sendRobotCommand(speed * 0.5, -0.5);
       break;
-    case 'stop':
     default:
-      addDebugLog('⏹️  Stopping');
       emergencyStop();
   }
 }
@@ -653,7 +596,6 @@ function drawRobotSim() {
   ctx.fillStyle = '#001';
   ctx.fillRect(0, 0, SIM, SIM);
 
-  // Grid
   ctx.strokeStyle = 'rgba(0,100,0,0.2)';
   for (let i = 0; i <= SIM; i += 40) {
     ctx.beginPath();
@@ -666,7 +608,6 @@ function drawRobotSim() {
     ctx.stroke();
   }
 
-  // Trail
   if (state.robotTrail.length > 1) {
     ctx.strokeStyle = 'rgba(0,255,0,0.4)';
     ctx.beginPath();
@@ -677,7 +618,6 @@ function drawRobotSim() {
     ctx.stroke();
   }
 
-  // Robot
   ctx.save();
   ctx.translate(state.robotX, state.robotY);
   ctx.rotate(state.robotTheta);
@@ -690,48 +630,10 @@ function drawRobotSim() {
   ctx.fill();
   ctx.restore();
 
-  // Info
   ctx.fillStyle = '#0f0';
   ctx.font = '10px monospace';
-  ctx.fillText(`v:${state.robotVLin.toFixed(2)}`, 5, 14);
-  ctx.fillText(`w:${state.robotVAng.toFixed(2)}`, 5, 24);
-}
-
-/* ==================== UI更新 ==================== */
-const debugLog = [];
-const MAX_DEBUG_LINES = 20;
-
-function addDebugLog(msg) {
-  debugLog.push('[' + new Date().toLocaleTimeString() + '] ' + msg);
-  if (debugLog.length > MAX_DEBUG_LINES) {
-    debugLog.shift();
-  }
-  const debugPanel = document.getElementById('debug-log');
-  if (debugPanel) {
-    debugPanel.textContent = debugLog.join('\n');
-    debugPanel.scrollTop = debugPanel.scrollHeight;
-  }
-  console.log(msg);
-}
-
-// console.log をオーバーライド
-const originalLog = console.log;
-const originalError = console.error;
-console.log = function(...args) {
-  originalLog.apply(console, args);
-  addDebugLog(args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
-};
-console.error = function(...args) {
-  originalError.apply(console, args);
-  addDebugLog('❌ ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
-};
-
-function updateStatus(id, text, className) {
-  const el = document.getElementById(id);
-  if (el) {
-    el.textContent = text;
-    el.className = `status-${className}`;
-  }
+  ctx.fillText('v:' + state.robotVLin.toFixed(2), 5, 14);
+  ctx.fillText('w:' + state.robotVAng.toFixed(2), 5, 24);
 }
 
 /* ==================== キー入力 ==================== */
@@ -743,11 +645,9 @@ window.addEventListener('keydown', (ev) => {
   if (ev.code === 'Space') {
     ev.preventDefault();
     state.frozen = !state.frozen;
-    updateStatus('edge-status', state.frozen ? 'FROZEN' : 'Running', state.frozen ? 'warn' : 'good');
   } else if (ev.code === 'KeyM') {
     state.mlEnabled = !state.mlEnabled;
     if (state.mlEnabled) ensureCocoSsdLoaded();
-    updateStatus('ml-status', state.mlEnabled ? 'Loading...' : 'OFF', state.mlEnabled ? 'warn' : 'warn');
   } else if (ev.code === 'KeyR') {
     state.robotEnabled = !state.robotEnabled;
     updateStatus('robot-mode', state.robotEnabled ? 'ON' : 'OFF', state.robotEnabled ? 'good' : 'warn');
@@ -766,10 +666,7 @@ window.addEventListener('keyup', (ev) => {
   keys[ev.code] = false;
 });
 
-// テスト用：モックレスポンス
 function testGemmaWithMockResponse() {
-  addDebugLog('🧪 Testing with mock response');
-  
   const mockDecisions = [
     { action: 'move_forward' },
     { action: 'turn_left' },
@@ -778,8 +675,7 @@ function testGemmaWithMockResponse() {
   ];
   
   const randomDecision = mockDecisions[Math.floor(Math.random() * mockDecisions.length)];
-  
-  addDebugLog('🎲 Mock Decision: ' + JSON.stringify(randomDecision));
+  console.log('Test decision:', randomDecision);
   applyGemmaDecision(randomDecision);
   state.gemmaLastDecision = randomDecision.action;
   updateStatus('gemma-status', randomDecision.action, 'good');
@@ -789,20 +685,14 @@ function testGemmaWithMockResponse() {
 let lastCvAt = 0;
 let fpsFrames = 0;
 let fpsAccMs = 0;
-let initAttempts = 0;
 
 function animate() {
   requestAnimationFrame(animate);
 
   const nowMs = performance.now();
 
-  // OpenCV初期化を繰り返し試行
   if (!state.cvReady && video.videoWidth > 0) {
-    initAttempts++;
-    if (initAttempts % 10 === 0) { // 10フレームごとに試行
-      console.log('Attempting OpenCV init, video:', video.videoWidth, 'x', video.videoHeight);
-      initOpenCV();
-    }
+    initOpenCV();
   }
 
   if (nowMs - lastCvAt > 90) {
@@ -822,22 +712,21 @@ function animate() {
   fpsAccMs += 16;
   if (fpsAccMs >= 500) {
     const fps = Math.round((fpsFrames * 1000) / fpsAccMs);
-    document.getElementById('fps').textContent = `FPS: ${fps}`;
+    document.getElementById('fps').textContent = 'FPS: ' + fps;
     fpsFrames = 0;
     fpsAccMs = 0;
   }
 }
 
-// OpenCV初期化完了後にスタート
 cv['onRuntimeInitialized'] = async () => {
   try {
-    console.log('OpenCV runtime initialized');
+    console.log('OpenCV ready');
     await initCamera();
-    console.log('Camera initialized, video:', video.videoWidth, 'x', video.videoHeight);
+    console.log('Camera ready');
     animate();
   } catch (e) {
     console.error('Startup error:', e);
-    updateStatus('camera-status', 'Camera unavailable: ' + e.message, 'bad');
+    updateStatus('camera-status', 'Unavailable', 'bad');
   }
 };
 </script>
