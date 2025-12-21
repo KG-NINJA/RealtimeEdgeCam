@@ -262,14 +262,38 @@ let blur = null;
 let edges = null;
 let blurKSize = null;
 let dilateKernel = null;
+let lastVideoW = 0;
+let lastVideoH = 0;
+
+function cleanupMatrices() {
+  if (srcRGBA) { srcRGBA.delete(); srcRGBA = null; }
+  if (procRGBA) { procRGBA.delete(); procRGBA = null; }
+  if (gray) { gray.delete(); gray = null; }
+  if (blur) { blur.delete(); blur = null; }
+  if (edges) { edges.delete(); edges = null; }
+}
 
 function initOpenCV() {
-  if (state.cvReady) return;
   if (!cv || !cv.Mat) return;
   if (video.videoWidth === 0) return;
 
+  // ビデオサイズが変わったかチェック
+  if (lastVideoW === video.videoWidth && lastVideoH === video.videoHeight && state.cvReady) {
+    return;
+  }
+
   try {
+    // 古いMatをクリーンアップ
+    if (cap) {
+      cap.delete();
+      cap = null;
+    }
+    cleanupMatrices();
+
+    // 新しいCapture作成
     cap = new cv.VideoCapture(video);
+    lastVideoW = video.videoWidth;
+    lastVideoH = video.videoHeight;
     state.videoW = video.videoWidth;
     state.videoH = video.videoHeight;
 
@@ -280,19 +304,23 @@ function initOpenCV() {
     cvCanvas.width = state.procW;
     cvCanvas.height = state.procH;
 
+    // 新しいMatを作成
     srcRGBA = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC4);
     procRGBA = new cv.Mat(state.procH, state.procW, cv.CV_8UC4);
     gray = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
     blur = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
     edges = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-    blurKSize = new cv.Size(5, 5);
-    dilateKernel = cv.Mat.ones(3, 3, cv.CV_8U);
+    
+    if (!blurKSize) blurKSize = new cv.Size(5, 5);
+    if (!dilateKernel) dilateKernel = cv.Mat.ones(3, 3, cv.CV_8U);
 
     state.cvReady = true;
-    updateStatus('camera-status', 'OpenCV Ready', 'good');
+    updateStatus('camera-status', `OpenCV Ready (${state.videoW}x${state.videoH})`, 'good');
+    console.log('OpenCV initialized:', state.videoW, 'x', state.videoH);
   } catch (e) {
     console.error('OpenCV init error:', e);
-    updateStatus('camera-status', 'OpenCV Error', 'bad');
+    state.cvReady = false;
+    updateStatus('camera-status', 'OpenCV Error: ' + e.message, 'bad');
   }
 }
 
