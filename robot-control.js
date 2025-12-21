@@ -191,7 +191,9 @@
   window.updateRobotControl = updateRobotControl;
 })();
 const DECISION_API =
-  "https://https://huggingface.co/spaces/KGNINJA/FunctionGemmabotdemo-docker.hf.space/decide";
+  "const DECISION_API =
+  "https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide";
+";
 
 async function sendDecisionRequest(data) {
   try {
