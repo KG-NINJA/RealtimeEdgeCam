@@ -5,64 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>A-1 Robot Vision + Gemma Control</title>
 <style>
+* { box-sizing: border-box; }
+
 body {
   margin: 0;
+  padding: 0;
   background: #000;
   color: #0f0;
   font-family: monospace;
   font-size: 12px;
   overflow: hidden;
+  width: 100vw;
+  height: 100vh;
 }
 
-#ui {
-  position: fixed;
-  top: 10px;
-  left: 10px;
-  background: rgba(0,0,0,0.8);
-  padding: 10px;
-  border: 1px solid #0f0;
-  color: #0f0;
-  max-width: 400px;
-  max-height: 90vh;
-  overflow-y: auto;
-  z-index: 100;
-}
-
-#canvas-container {
+#camera-feed {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
+  background: #000;
+  z-index: 1;
 }
 
-canvas {
+#cv {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
 }
 
-.robot-sim {
-  position: fixed;
-  bottom: 10px;
-  right: 10px;
-  border: 2px solid #0f0;
-  background: rgba(0,0,0,0.9);
-  z-index: 50;
-}
-
-.status-line {
-  margin: 4px 0;
-  padding: 2px 0;
-  border-bottom: 1px solid #033;
-}
-
-.status-good { color: #0f0; }
-.status-warn { color: #ff0; }
-.status-bad { color: #f00; }
-
-video {
+#video {
   position: fixed;
   left: -10000px;
   top: -10000px;
@@ -70,61 +43,141 @@ video {
   height: 1px;
   opacity: 0;
 }
+
+#ui {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  background: rgba(0,0,0,0.95);
+  padding: 12px;
+  border: 2px solid #0f0;
+  color: #0f0;
+  max-width: 420px;
+  max-height: 85vh;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 0 10px rgba(0,255,0,0.3);
+}
+
+#ui b {
+  font-size: 14px;
+}
+
+.status-line {
+  margin: 5px 0;
+  padding: 3px 0;
+  border-bottom: 1px solid #033;
+  font-size: 11px;
+}
+
+.status-good { color: #0f0; }
+.status-warn { color: #ff0; }
+.status-bad { color: #f00; }
+.status-neutral { color: #aaa; }
+
+.controls {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #033;
+  font-size: 11px;
+}
+
+.robot-sim {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  border: 2px solid #0f0;
+  background: rgba(0,20,0,0.95);
+  z-index: 50;
+  box-shadow: 0 0 10px rgba(0,255,0,0.2);
+}
+
+#fps-counter {
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  background: rgba(0,0,0,0.8);
+  padding: 5px 10px;
+  border: 1px solid #0f0;
+  color: #0f0;
+  font-size: 11px;
+  z-index: 40;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #111;
+}
+::-webkit-scrollbar-thumb {
+  background: #0f0;
+  border-radius: 3px;
+}
 </style>
 </head>
 <body>
 
-<div id="ui">
-<b>A-1 Robot Vision System</b><br>
-<div class="status-line">
-  Camera: <span id="camera-status" class="status-warn">待機中</span>
-</div>
-<div class="status-line">
-  Edge Detection: <span id="edge-status" class="status-warn">待機中</span>
-</div>
-<div class="status-line">
-  COCO-SSD: <span id="ml-status" class="status-warn">OFF (M キーで ON)</span>
-</div>
-<div class="status-line">
-  Obstacle Score: <span id="obs-score">0.0</span>
-</div>
-<div class="status-line">
-  Gemma Status: <span id="gemma-status" class="status-warn">待機中</span>
-</div>
-<div class="status-line">
-  Robot Mode: <span id="robot-mode" class="status-warn">OFF (R キーで ON)</span>
-</div>
-<div class="status-line">
-  Last Decision: <span id="last-decision">-</span>
-</div>
-<div class="status-line">
-  FPS: <span id="fps">0</span>
-</div>
-
-<br><b>操作:</b><br>
-M: ML ON/OFF<br>
-R: Robot ON/OFF<br>
-O: Auto Mode<br>
-X: Emergency Stop<br>
-D: Edge Display<br>
-Space: Freeze<br>
-W/A/S/D: Manual Control<br>
-G: Ask Gemma<br>
-</div>
-
-<div id="canvas-container">
+<div id="camera-feed">
   <canvas id="cv"></canvas>
+</div>
+
+<div id="ui">
+  <b>⚙️ A-1 Robot Vision System</b><br>
+  
+  <div class="status-line">
+    📷 Camera: <span id="camera-status" class="status-neutral">初期化中...</span>
+  </div>
+  
+  <div class="status-line">
+    🔍 Edge Detection: <span id="edge-status" class="status-neutral">待機中</span>
+  </div>
+  
+  <div class="status-line">
+    🤖 COCO-SSD: <span id="ml-status" class="status-warn">OFF (M で ON)</span>
+  </div>
+  
+  <div class="status-line">
+    📊 Obstacle Score: <span id="obs-score" class="status-warn">0.000</span>
+  </div>
+  
+  <div class="status-line">
+    💭 Gemma Status: <span id="gemma-status" class="status-neutral">待機中</span>
+  </div>
+  
+  <div class="status-line">
+    🚗 Robot Mode: <span id="robot-mode" class="status-warn">OFF</span>
+  </div>
+  
+  <div class="status-line">
+    📍 Last Decision: <span id="last-decision" class="status-neutral">-</span>
+  </div>
+
+  <div class="controls">
+    <b>⌨️ 操作キー:</b><br>
+    <span style="color: #0f0;">M</span> = ML ON/OFF<br>
+    <span style="color: #0f0;">R</span> = Robot ON/OFF<br>
+    <span style="color: #0f0;">O</span> = Auto/Manual<br>
+    <span style="color: #0f0;">X</span> = Emergency Stop<br>
+    <span style="color: #0f0;">D</span> = Edge Display<br>
+    <span style="color: #0f0;">Space</span> = Freeze<br>
+    <span style="color: #0f0;">W/A/S/D</span> = Manual<br>
+    <span style="color: #0f0;">G</span> = Ask Gemma<br>
+  </div>
+</div>
+
+<div id="fps-counter">
+  <span id="fps">FPS: 0</span>
 </div>
 
 <canvas id="robot-sim" class="robot-sim" width="240" height="240"></canvas>
 
-<video id="video" autoplay playsinline></video>
+<video id="video" autoplay playsinline muted></video>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 
 <script>
-/* ===== グローバル状態 ===== */
+/* ==================== グローバル状態 ==================== */
 const state = {
   cvReady: false,
   procW: 320,
@@ -133,9 +186,7 @@ const state = {
   videoH: 0,
   frozen: false,
   debugEdges: true,
-  captureMode: 'videoCapture',
   
-  // ML
   mlEnabled: false,
   mlReady: false,
   mlLoading: false,
@@ -148,17 +199,15 @@ const state = {
   mlLastBox: null,
   lastObstacleScore: 0,
   
-  // Robot
   robotEnabled: false,
   robotAutoMode: true,
-  robotX: 0,
-  robotY: 0,
+  robotX: 120,
+  robotY: 120,
   robotTheta: 0,
   robotVLin: 0,
   robotVAng: 0,
   robotTrail: [],
   
-  // Gemma
   gemmaLastDecision: '',
   gemmaNextAtMs: 0,
   gemmaIntervalMs: 800,
@@ -171,166 +220,183 @@ const ML_ALLOWED = new Set([
   'dog', 'cat', 'bird', 'horse', 'cow', 'elephant', 'bear', 'person'
 ]);
 
-/* ===== Video & Canvas Setup ===== */
+/* ==================== DOM要素 ==================== */
 const video = document.getElementById('video');
 const cvCanvas = document.getElementById('cv');
-const overlayCtx = cvCanvas.getContext('2d');
 
-const cameraConstraints = {
-  audio: false,
-  video: {
-    facingMode: { ideal: 'environment' },
-    width: { ideal: 640 },
-    height: { ideal: 480 },
-    frameRate: { ideal: 30, max: 30 },
-  },
-};
+/* ==================== カメラ初期化 ==================== */
+async function initCamera() {
+  try {
+    const constraints = {
+      audio: false,
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+      },
+    };
 
-navigator.mediaDevices.getUserMedia(cameraConstraints).then((stream) => {
-  video.srcObject = stream;
-  video.muted = true;
-  const tryPlay = () => video.play().catch(() => {});
-  video.addEventListener('loadedmetadata', tryPlay, { once: true });
-  tryPlay();
-}).catch((err) => {
-  updateStatus('camera-status', `エラー: ${err.message}`, 'bad');
-});
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    
+    return new Promise((resolve) => {
+      video.onloadedmetadata = () => {
+        video.play().catch(e => console.error('Play error:', e));
+        updateStatus('camera-status', `Ready (${video.videoWidth}x${video.videoHeight})`, 'good');
+        resolve();
+      };
+    });
+  } catch (err) {
+    console.error('Camera error:', err);
+    updateStatus('camera-status', `Error: ${err.name}`, 'bad');
+    throw err;
+  }
+}
 
-/* ===== OpenCV 初期化 ===== */
+/* ==================== OpenCV初期化 ==================== */
 let cap = null;
 let srcRGBA = null;
 let procRGBA = null;
 let gray = null;
 let blur = null;
 let edges = null;
+let blurKSize = null;
+let dilateKernel = null;
 
-function initCvOnceReady() {
+function initOpenCV() {
   if (state.cvReady) return;
   if (!cv || !cv.Mat) return;
   if (video.videoWidth === 0) return;
 
-  cap = new cv.VideoCapture(video);
-  state.videoW = video.videoWidth;
-  state.videoH = video.videoHeight;
-  srcRGBA = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC4);
+  try {
+    cap = new cv.VideoCapture(video);
+    state.videoW = video.videoWidth;
+    state.videoH = video.videoHeight;
 
-  const aspect = state.videoW / state.videoH;
-  const targetW = 320;
-  state.procH = Math.floor(targetW / aspect);
+    const aspect = state.videoW / state.videoH;
+    state.procW = 320;
+    state.procH = Math.floor(320 / aspect);
 
-  cvCanvas.width = state.procW;
-  cvCanvas.height = state.procH;
+    cvCanvas.width = state.procW;
+    cvCanvas.height = state.procH;
 
-  procRGBA = new cv.Mat(state.procH, state.procW, cv.CV_8UC4);
-  gray = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-  blur = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-  edges = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
+    srcRGBA = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC4);
+    procRGBA = new cv.Mat(state.procH, state.procW, cv.CV_8UC4);
+    gray = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
+    blur = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
+    edges = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
+    blurKSize = new cv.Size(5, 5);
+    dilateKernel = cv.Mat.ones(3, 3, cv.CV_8U);
 
-  state.cvReady = true;
-  updateStatus('camera-status', `準備完了 (${state.videoW}x${state.videoH})`, 'good');
+    state.cvReady = true;
+    updateStatus('camera-status', 'OpenCV Ready', 'good');
+  } catch (e) {
+    console.error('OpenCV init error:', e);
+    updateStatus('camera-status', 'OpenCV Error', 'bad');
+  }
 }
 
-/* ===== COCO-SSD 読み込み ===== */
+/* ==================== CV処理 ==================== */
+function runCvOnce() {
+  if (!state.cvReady || state.frozen) return;
+  if (video.readyState !== 4) return; // HAVE_ENOUGH_DATA
+
+  try {
+    cap.read(srcRGBA);
+    cv.resize(srcRGBA, procRGBA, new cv.Size(state.procW, state.procH), 0, 0, cv.INTER_AREA);
+    cv.cvtColor(procRGBA, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, blur, blurKSize, 1.1, 1.1, cv.BORDER_DEFAULT);
+    cv.equalizeHist(blur, gray);
+    cv.Canny(gray, edges, 35, 95);
+    cv.dilate(edges, edges, dilateKernel);
+
+    if (state.debugEdges) {
+      cv.imshow(cvCanvas, edges);
+      drawMlOverlay();
+    }
+
+    const nz = cv.countNonZero(edges);
+    updateStatus('edge-status', `${nz} pixels`, nz > 0 ? 'good' : 'warn');
+  } catch (e) {
+    console.error('CV error:', e);
+  }
+}
+
+function drawMlOverlay() {
+  if (!state.mlLastBox || state.mlLastScore < state.mlMinScore) return;
+
+  const ctx = cvCanvas.getContext('2d');
+  const b = state.mlLastBox;
+  const x = Math.max(0, Math.min(state.procW - 1, b.x));
+  const y = Math.max(0, Math.min(state.procH - 1, b.y));
+  const w = Math.max(1, Math.min(state.procW - x, b.w));
+  const h = Math.max(1, Math.min(state.procH - y, b.h));
+
+  ctx.strokeStyle = 'rgba(0,255,0,0.9)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+
+  const label = `${state.mlLastClass} ${(state.mlLastScore * 100).toFixed(0)}%`;
+  ctx.fillStyle = 'rgba(0,255,0,0.8)';
+  ctx.fillRect(x, y - 16, 140, 16);
+  ctx.fillStyle = '#000';
+  ctx.font = '12px monospace';
+  ctx.fillText(label, x + 4, y - 4);
+}
+
+/* ==================== COCO-SSD ==================== */
 let tfRef = null;
 let cocoRef = null;
 
 async function ensureCocoSsdLoaded() {
-  if (state.mlReady) return;
-  if (state.mlLoading) return;
+  if (state.mlReady || state.mlLoading) return;
   state.mlLoading = true;
+  updateStatus('ml-status', 'Loading...', 'warn');
 
   try {
-    await loadScriptOnce('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
-    await loadScriptOnce('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
+    // TensorFlow.js
+    if (!window.tf) {
+      const tfScript = document.createElement('script');
+      tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js';
+      await new Promise((resolve, reject) => {
+        tfScript.onload = resolve;
+        tfScript.onerror = reject;
+        document.head.appendChild(tfScript);
+      });
+    }
+
+    // COCO-SSD
+    if (!window.cocoSsd) {
+      const cocoScript = document.createElement('script');
+      cocoScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js';
+      await new Promise((resolve, reject) => {
+        cocoScript.onload = resolve;
+        cocoScript.onerror = reject;
+        document.head.appendChild(cocoScript);
+      });
+    }
 
     tfRef = window.tf;
     cocoRef = window.cocoSsd;
 
-    if (!tfRef || !cocoRef) throw new Error('TF or COCO-SSD not loaded');
+    if (!tfRef || !cocoRef) throw new Error('Libraries not loaded');
 
     try { await tfRef.setBackend('webgl'); } catch (_) {}
     try { await tfRef.ready(); } catch (_) {}
 
     state.mlModel = await cocoRef.load({ base: 'lite_mobilenet_v2' });
     state.mlReady = true;
-    updateStatus('ml-status', 'ON (Ready)', 'good');
-  } catch (e) {
-    updateStatus('ml-status', `エラー: ${e.message}`, 'bad');
     state.mlLoading = false;
-  }
-  state.mlLoading = false;
-}
-
-function loadScriptOnce(src) {
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-src="${src}"]`);
-    if (existing) {
-      if (existing.dataset.loaded === '1') return resolve();
-      existing.addEventListener('load', resolve, { once: true });
-      existing.addEventListener('error', reject, { once: true });
-      return;
-    }
-    const s = document.createElement('script');
-    s.src = src;
-    s.async = true;
-    s.dataset.src = src;
-    s.addEventListener('load', () => { s.dataset.loaded = '1'; resolve(); }, { once: true });
-    s.addEventListener('error', reject, { once: true });
-    document.head.appendChild(s);
-  });
-}
-
-/* ===== CV処理 ===== */
-const grabCanvas = document.createElement('canvas');
-const grabCtx = grabCanvas.getContext('2d', { willReadFrequently: true });
-
-function runCvOnce() {
-  if (!state.cvReady || state.frozen) return;
-  if (video.videoWidth === 0 || video.paused) return;
-
-  try {
-    cap.read(srcRGBA);
-    cv.resize(srcRGBA, procRGBA, new cv.Size(state.procW, state.procH), 0, 0, cv.INTER_AREA);
+    updateStatus('ml-status', 'Ready', 'good');
   } catch (e) {
-    return;
+    console.error('ML load error:', e);
+    state.mlLoading = false;
+    updateStatus('ml-status', `Error: ${e.message}`, 'bad');
   }
-
-  cv.cvtColor(procRGBA, gray, cv.COLOR_RGBA2GRAY);
-  cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 1.1, 1.1, cv.BORDER_DEFAULT);
-  cv.equalizeHist(blur, gray);
-  cv.Canny(gray, edges, 35, 95);
-
-  if (state.debugEdges) {
-    cvCanvas.style.display = 'block';
-    cv.imshow(cvCanvas, edges);
-    drawMlOverlay();
-  }
-
-  updateStatus('edge-status', `${cv.countNonZero(edges)} pixels`, 'good');
 }
 
-function drawMlOverlay() {
-  if (!state.mlLastBox || state.mlLastScore < state.mlMinScore) return;
+const grabCanvas = document.createElement('canvas');
 
-  const b = state.mlLastBox;
-  const x = Math.max(0, Math.min(state.procW - 1, b.x));
-  const y = Math.max(0, Math.min(state.procH - 1, b.y));
-  const wBox = Math.max(1, Math.min(state.procW - x, b.w));
-  const hBox = Math.max(1, Math.min(state.procH - y, b.h));
-
-  overlayCtx.strokeStyle = 'rgba(0,255,0,0.95)';
-  overlayCtx.lineWidth = 2;
-  overlayCtx.strokeRect(x + 0.5, y + 0.5, wBox - 1, hBox - 1);
-
-  const label = `${state.mlLastClass} ${(state.mlLastScore * 100).toFixed(0)}%`;
-  overlayCtx.font = '12px monospace';
-  overlayCtx.fillStyle = 'rgba(0,255,0,0.85)';
-  overlayCtx.fillRect(x, y - 16, 120, 16);
-  overlayCtx.fillStyle = 'rgba(0,0,0,0.95)';
-  overlayCtx.fillText(label, x + 3, y - 4);
-}
-
-/* ===== COCO-SSD 実行 ===== */
 async function runCocoOnce(nowMs) {
   if (!state.mlEnabled || !state.mlReady) return;
   if (nowMs < state.mlNextAtMs) return;
@@ -339,11 +405,10 @@ async function runCocoOnce(nowMs) {
 
   state.mlInFlight = true;
   try {
-    grabCtx.drawImage(video, 0, 0, state.procW, state.procH);
     grabCanvas.width = state.procW;
     grabCanvas.height = state.procH;
-    const grabCtx2 = grabCanvas.getContext('2d');
-    grabCtx2.drawImage(video, 0, 0, state.procW, state.procH);
+    const gctx = grabCanvas.getContext('2d');
+    gctx.drawImage(video, 0, 0, state.procW, state.procH);
 
     const preds = await state.mlModel.detect(grabCanvas, 6);
     let best = null;
@@ -369,7 +434,7 @@ async function runCocoOnce(nowMs) {
       const [x, y, w, h] = best.bbox;
       state.mlLastBox = { x, y, w, h };
       state.lastObstacleScore = Math.round((best._score || 0) * 1000);
-      updateStatus('obs-score', best._score.toFixed(3), 'warn');
+      updateStatus('obs-score', (state.lastObstacleScore / 1000).toFixed(3), 'warn');
     } else {
       state.mlLastClass = '';
       state.mlLastScore = 0;
@@ -382,26 +447,26 @@ async function runCocoOnce(nowMs) {
   state.mlInFlight = false;
 }
 
-/* ===== Gemma 統合 ===== */
+/* ==================== Gemma統合 ==================== */
 async function askGemmaDecision(nowMs) {
   if (!state.mlEnabled || !state.mlReady) return;
   if (nowMs < state.gemmaNextAtMs) return;
   state.gemmaNextAtMs = nowMs + state.gemmaIntervalMs;
 
-  const observation = {
+  const obs = {
     obstacle_score: state.lastObstacleScore / 1000.0,
     detected_class: state.mlLastClass,
     confidence: state.mlLastScore,
     has_obstacle: state.lastObstacleScore > 500,
   };
 
-  updateStatus('gemma-status', '処理中...', 'warn');
+  updateStatus('gemma-status', 'Asking...', 'warn');
 
   try {
     const res = await fetch('https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(observation)
+      body: JSON.stringify(obs)
     });
 
     const decision = await res.json();
@@ -410,13 +475,12 @@ async function askGemmaDecision(nowMs) {
     updateStatus('gemma-status', decision.action || 'ready', 'good');
   } catch (e) {
     console.error('Gemma error:', e);
-    updateStatus('gemma-status', `エラー: ${e.message}`, 'bad');
+    updateStatus('gemma-status', 'Error', 'bad');
   }
 }
 
 function applyGemmaDecision(d) {
-  if (!d || !d.action) return;
-  if (!state.robotEnabled) return;
+  if (!d || !d.action || !state.robotEnabled) return;
 
   switch (d.action) {
     case 'move_forward':
@@ -428,64 +492,61 @@ function applyGemmaDecision(d) {
     case 'turn_right':
       sendRobotCommand(0.15, -0.5);
       break;
-    case 'stop':
     default:
       emergencyStop();
   }
 }
 
-/* ===== ロボット制御 ===== */
+/* ==================== ロボット制御 ==================== */
 function sendRobotCommand(lin, ang) {
-  const MAX_LINEAR = 0.5;
-  const MAX_ANGULAR = 1.0;
-  state.robotVLin = Math.max(-MAX_LINEAR, Math.min(MAX_LINEAR, lin));
-  state.robotVAng = Math.max(-MAX_ANGULAR, Math.min(MAX_ANGULAR, ang));
+  state.robotVLin = Math.max(-0.5, Math.min(0.5, lin));
+  state.robotVAng = Math.max(-1.0, Math.min(1.0, ang));
 }
 
 function emergencyStop() {
-  sendRobotCommand(0, 0);
+  state.robotVLin = 0;
+  state.robotVAng = 0;
 }
 
-function updateRobotSimulation(dtMs) {
+function updateRobotSim(dt) {
   if (!state.robotEnabled) return;
 
-  const dt = dtMs / 1000;
   state.robotTheta += state.robotVAng * dt;
   state.robotX += Math.cos(state.robotTheta) * state.robotVLin * dt * 80;
   state.robotY += Math.sin(state.robotTheta) * state.robotVLin * dt * 80;
 
-  const SIM_SIZE = 240;
-  state.robotX = Math.max(10, Math.min(SIM_SIZE - 10, state.robotX));
-  state.robotY = Math.max(10, Math.min(SIM_SIZE - 10, state.robotY));
+  const SIM = 240;
+  state.robotX = Math.max(10, Math.min(SIM - 10, state.robotX));
+  state.robotY = Math.max(10, Math.min(SIM - 10, state.robotY));
 
   state.robotTrail.push({ x: state.robotX, y: state.robotY });
   if (state.robotTrail.length > 200) state.robotTrail.shift();
 }
 
-function drawRobotSimulator() {
+function drawRobotSim() {
   const canvas = document.getElementById('robot-sim');
-  if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  const SIM_SIZE = 240;
+  const SIM = 240;
 
-  ctx.clearRect(0, 0, SIM_SIZE, SIM_SIZE);
+  ctx.fillStyle = '#001';
+  ctx.fillRect(0, 0, SIM, SIM);
 
   // Grid
-  ctx.strokeStyle = 'rgba(0,255,0,0.1)';
-  for (let i = 0; i <= SIM_SIZE; i += 40) {
+  ctx.strokeStyle = 'rgba(0,100,0,0.2)';
+  for (let i = 0; i <= SIM; i += 40) {
     ctx.beginPath();
     ctx.moveTo(i, 0);
-    ctx.lineTo(i, SIM_SIZE);
+    ctx.lineTo(i, SIM);
     ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(0, i);
-    ctx.lineTo(SIM_SIZE, i);
+    ctx.lineTo(SIM, i);
     ctx.stroke();
   }
 
   // Trail
   if (state.robotTrail.length > 1) {
-    ctx.strokeStyle = 'rgba(0,255,0,0.5)';
+    ctx.strokeStyle = 'rgba(0,255,0,0.4)';
     ctx.beginPath();
     state.robotTrail.forEach((p, i) => {
       if (i === 0) ctx.moveTo(p.x, p.y);
@@ -494,27 +555,27 @@ function drawRobotSimulator() {
     ctx.stroke();
   }
 
-  // Robot body
+  // Robot
   ctx.save();
   ctx.translate(state.robotX, state.robotY);
   ctx.rotate(state.robotTheta);
   ctx.fillStyle = state.robotEnabled ? '#0f0' : '#555';
   ctx.beginPath();
-  ctx.moveTo(12, 0);
-  ctx.lineTo(-12, -6);
-  ctx.lineTo(-12, 6);
+  ctx.moveTo(10, 0);
+  ctx.lineTo(-10, -6);
+  ctx.lineTo(-10, 6);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
 
-  // Status
+  // Info
   ctx.fillStyle = '#0f0';
   ctx.font = '10px monospace';
-  ctx.fillText(`v:${state.robotVLin.toFixed(2)}`, 8, 16);
-  ctx.fillText(`w:${state.robotVAng.toFixed(2)}`, 8, 28);
+  ctx.fillText(`v:${state.robotVLin.toFixed(2)}`, 5, 14);
+  ctx.fillText(`w:${state.robotVAng.toFixed(2)}`, 5, 24);
 }
 
-/* ===== UI 更新 ===== */
+/* ==================== UI更新 ==================== */
 function updateStatus(id, text, className) {
   const el = document.getElementById(id);
   if (el) {
@@ -523,7 +584,7 @@ function updateStatus(id, text, className) {
   }
 }
 
-/* ===== キー入力 ===== */
+/* ==================== キー入力 ==================== */
 const keys = {};
 
 window.addEventListener('keydown', (ev) => {
@@ -532,22 +593,18 @@ window.addEventListener('keydown', (ev) => {
   if (ev.code === 'Space') {
     ev.preventDefault();
     state.frozen = !state.frozen;
+    updateStatus('edge-status', state.frozen ? 'FROZEN' : 'Running', state.frozen ? 'warn' : 'good');
   } else if (ev.code === 'KeyM') {
     state.mlEnabled = !state.mlEnabled;
-    if (state.mlEnabled) {
-      ensureCocoSsdLoaded();
-    }
+    if (state.mlEnabled) ensureCocoSsdLoaded();
+    updateStatus('ml-status', state.mlEnabled ? 'Loading...' : 'OFF', state.mlEnabled ? 'warn' : 'warn');
   } else if (ev.code === 'KeyR') {
     state.robotEnabled = !state.robotEnabled;
     updateStatus('robot-mode', state.robotEnabled ? 'ON' : 'OFF', state.robotEnabled ? 'good' : 'warn');
-  } else if (ev.code === 'KeyO') {
-    state.robotAutoMode = !state.robotAutoMode;
   } else if (ev.code === 'KeyX') {
     emergencyStop();
   } else if (ev.code === 'KeyD') {
     state.debugEdges = !state.debugEdges;
-  } else if (ev.code === 'KeyG') {
-    askGemmaDecision(performance.now());
   }
 });
 
@@ -555,9 +612,8 @@ window.addEventListener('keyup', (ev) => {
   keys[ev.code] = false;
 });
 
-/* ===== メインループ ===== */
+/* ==================== メインループ ==================== */
 let lastCvAt = 0;
-let lastRobotAt = 0;
 let fpsFrames = 0;
 let fpsAccMs = 0;
 
@@ -566,7 +622,9 @@ function animate() {
 
   const nowMs = performance.now();
 
-  initCvOnceReady();
+  if (!state.cvReady) {
+    initOpenCV();
+  }
 
   if (nowMs - lastCvAt > 90) {
     runCvOnce();
@@ -577,34 +635,29 @@ function animate() {
   askGemmaDecision(nowMs);
 
   if (state.robotEnabled) {
-    if (nowMs - lastRobotAt > 100) {
-      if (state.robotAutoMode) {
-        askGemmaDecision(nowMs);
-      } else {
-        let lin = 0, ang = 0;
-        if (keys.KeyW) lin += 1;
-        if (keys.KeyS) lin -= 1;
-        if (keys.KeyA) ang += 1;
-        if (keys.KeyD) ang -= 1;
-        sendRobotCommand(lin * 0.5, ang * 1.0);
-      }
-      updateRobotSimulation(100);
-      drawRobotSimulator();
-      lastRobotAt = nowMs;
-    }
+    updateRobotSim(0.1);
+    drawRobotSim();
   }
 
   fpsFrames++;
   fpsAccMs += 16;
   if (fpsAccMs >= 500) {
-    document.getElementById('fps').textContent = Math.round((fpsFrames * 1000) / fpsAccMs);
+    const fps = Math.round((fpsFrames * 1000) / fpsAccMs);
+    document.getElementById('fps').textContent = `FPS: ${fps}`;
     fpsFrames = 0;
     fpsAccMs = 0;
   }
 }
 
-cv['onRuntimeInitialized'] = () => {
-  animate();
+// OpenCV初期化完了後にスタート
+cv['onRuntimeInitialized'] = async () => {
+  try {
+    await initCamera();
+    animate();
+  } catch (e) {
+    console.error('Startup error:', e);
+    updateStatus('camera-status', 'Camera unavailable', 'bad');
+  }
 };
 </script>
 
