@@ -93,15 +93,11 @@ function log(msg, obj) {
 ===================== */
 function buildObservation() {
   return {
-    position: {
-      x: robot.x.toFixed(1),
-      y: robot.y.toFixed(1)
-    },
-    velocity: robot.vLin.toFixed(2),
-    auto: robot.autoMode,
-    note: "demo observation"
+    front_distance: 1.0,        // 仮：前方クリア
+    speed: robot.vLin           // 現在速度
   };
 }
+
 
 /* =====================
    Gemma 呼び出し（Gキー）
