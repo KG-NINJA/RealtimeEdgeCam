@@ -1,1747 +1,275 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<title>Artificial Structure Wireframe (A-1)</title>
+<meta charset="utf-8" />
+<title>Robot Decision Demo (G-key)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-  <button id="testDecision">Test Reaction</button>
-<pre id="reactionLog"></pre>
-
-body { margin:0; background:#000; overflow:hidden; }
-#ui {
-  position:fixed;
-  top:10px; left:10px;
-  color:#0f0;
-  font-family:monospace;
-  font-size:12px;
-  background:rgba(0,0,0,0.6);
-  padding:6px;
-}
-#ml-btn {
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  z-index: 10;
-  padding: 8px 10px;
-  font-family: monospace;
-  font-size: 12px;
-  color: #0f0;
-  background: rgba(0, 0, 0, 0.7);
-  border: 1px solid #0f0;
-  border-radius: 4px;
-  cursor: pointer;
-}
-@media (hover: hover) {
-  #ml-btn:hover { background: rgba(0, 64, 0, 0.8); }
-}
-/* 日本語コメント: display:noneだとブラウザによってはデコード/フレーム更新が止まることがあるため、画面外に退避する */
-video {
-  position: fixed;
-  left: -10000px;
-  top: -10000px;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
-/* 日本語コメント: エッジ（Canny）を障害物検知の可視化に使うため全面表示（処理解像度をCSSで拡大） */
-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  pointer-events: none;
-  /* 日本語コメント: 低解像度を拡大しても輪郭が潰れにくい（AIの視認性も上がる） */
-  image-rendering: pixelated;
-}
+  body {
+    margin: 0;
+    background: #0b0e14;
+    color: #cfd8ff;
+    font-family: monospace;
+  }
+  #hud {
+    position: fixed;
+    left: 10px;
+    top: 10px;
+    background: rgba(0,0,0,0.6);
+    padding: 10px;
+    border: 1px solid #345;
+    width: 340px;
+  }
+  #log {
+    white-space: pre-wrap;
+    font-size: 12px;
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 6px;
+    color: #9ff;
+  }
 </style>
 </head>
 <body>
 
-<div id="ui">
-A-1 Artificial Structure Mapper<br>
-iPhone Camera → Edges + COCO-SSD → Obstacle
+<div id="hud">
+  <div><b>Robot Decision Demo</b></div>
+  <div>R: Control | O: Auto | G: Ask Gemma | X: STOP</div>
+  <div id="state"></div>
+  <div id="log"></div>
 </div>
 
-<button id="ml-btn" type="button">COCO-SSD: OFF</button>
-
-<video id="video" autoplay playsinline></video>
-<canvas id="cv"></canvas>
-
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
-<script src="https://docs.opencv.org/4.x/opencv.js"></script>
-<script src="./semantic-map.js"></script>
-<script src="./speech-greeting.js"></script>
-<script src="./robot-control.js"></script>
-<script src="./gemini-nano.js"></script>
+<canvas id="sim" width="400" height="400"></canvas>
 
 <script>
-// Optimization summary:
-// - CPU reduction: 低解像度CV（内部ダウンサンプリング）+ CV処理を時間間引き（一定msごと）+ Manhattanフィルタ/線分マージで後段を軽量化
-// - Memory reduction: OpenCV Matの再利用、Three.jsのBufferGeometry/TypedArrayを再利用（毎フレームのLine生成/Group再構築を禁止）
-// - Stability improvements: 長い直線のみ採用、水平/垂直優先、線分マージ、時間的な線分持続（TTL）+ 指数平滑でフリッカ抑制
+/* =====================
+   設定
+===================== */
+const DECISION_API =
+  "https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide";
 
-/* ===== Camera（iPhone Safari） ===== */
-const video = document.getElementById('video');
+const MAX_LINEAR = 0.5;
+const MAX_ANGULAR = 1.0;
+const DT_MS = 100;
+const SIM_SIZE = 400;
 
-// 日本語コメント: iPhoneの負荷を抑えるため、入力解像度は控えめに要求（Safariは無視する場合あり）
-const cameraConstraints = {
-  audio: false,
-  video: {
-    facingMode: { ideal: 'environment' },
-    width: { ideal: 640 },
-    height: { ideal: 480 },
-    frameRate: { ideal: 30, max: 30 },
-  },
+/* =====================
+   状態
+===================== */
+const robot = {
+  controlEnabled: false,
+  autoMode: true,
+  x: SIM_SIZE/2,
+  y: SIM_SIZE/2,
+  theta: 0,
+  vLin: 0,
+  vAng: 0,
+  trail: []
 };
 
-navigator.mediaDevices.getUserMedia(cameraConstraints).then((stream) => {
-  video.srcObject = stream;
-  // 日本語コメント: PCブラウザでは明示的にplay()しないとvideoWidth/Heightが0のままな場合がある
-  video.muted = true;
-  const tryPlay = () => video.play().catch(() => {});
-  video.addEventListener('loadedmetadata', tryPlay, { once: true });
-  tryPlay();
-}).catch((err) => {
-  // 日本語コメント: カメラ許可が失敗した場合はUIに出す（デバッグのため）
-  const ui = document.getElementById('ui');
-  ui.textContent = `Camera error: ${String(err)}`;
-});
+const keys = {};
+const canvas = document.getElementById("sim");
+const ctx = canvas.getContext("2d");
+const logEl = document.getElementById("log");
+const stateEl = document.getElementById("state");
 
-/* ===== Canvas ===== */
-const cvCanvas = document.getElementById('cv');
-// 日本語コメント: VideoCaptureを使うため、CanvasのdrawImage→imreadは不要（CPU/メモリの節約）
-// 日本語コメント: Agent browserのVisionが「1枚の画」として取りやすいよう、エッジ＋BBoxは同一canvasに合成する
-const overlayCtx = cvCanvas.getContext('2d');
-const mlBtn = document.getElementById('ml-btn');
-
-/* ===== Semantic Map（Depth→単色） ===== */
-// 日本語コメント:
-// - エッジ強調は「植物/影/模様」まで増幅して破綻しやすい
-// - Agent Visionには「意味（青=通路, 赤=障害物, 黒=未知）」だけを渡す方が強い
-// - 3Dcap側から Float32Array(640*480, 単位m) を受け取り、ここで単色マップに変換する
-const semantic = {
-  enabled: true,              // 日本語コメント: Depthが来たら自動で優先（来ない場合は既存のエッジ表示）
-  width: 640,
-  height: 480,
-  latestDepth: null,          // Float32Array
-  lastRenderAtMs: 0,
-  renderIntervalMs: 66,       // 約15fps（視認性とCPUのバランス）
-  stats: { safe: 0, obstacle: 0, unknown: 0, total: 0 },
-  params: {
-    nearM: 0.25,
-    farM: 6.0,
-    groundBandM: 0.02,
-    obstacleDeltaM: 0.05,     // 日本語コメント: 5cm段差を障害物扱い
-    yStartRatio: 0.55,
-    expectedQuantile: 0.2,
-  },
-};
-
-// 日本語コメント: 外部（3Dcap/ネイティブ/WS/worker等）からDepthフレームを投入する窓口
-// 使い方: window.pushDepthFrame(depthFloat32Array)
-window.pushDepthFrame = function pushDepthFrame(depthFloat32Array) {
-  if (!(depthFloat32Array instanceof Float32Array)) return;
-  if (depthFloat32Array.length !== semantic.width * semantic.height) return;
-  semantic.latestDepth = depthFloat32Array;
-};
-
-// 日本語コメント: 動作確認用のダミーDepth（外部入力がまだ無い時のテストに使う）
-// 使い方: window.debugInjectDummyDepth()
-window.debugInjectDummyDepth = function debugInjectDummyDepth() {
-  const w = semantic.width;
-  const h = semantic.height;
-  const d = new Float32Array(w * h);
-  // 日本語コメント: 地面（奥へ行くほど少し遠い想定）
-  for (let y = 0; y < h; y++) {
-    const zRow = 1.2 + (y / (h - 1)) * 1.2; // 1.2m〜2.4m
-    const base = y * w;
-    for (let x = 0; x < w; x++) d[base + x] = zRow;
-  }
-  // 日本語コメント: 手前に障害物（矩形）を置く（期待地面より0.12m近い）
-  const ox0 = Math.floor(w * 0.40);
-  const ox1 = Math.floor(w * 0.60);
-  const oy0 = Math.floor(h * 0.65);
-  const oy1 = Math.floor(h * 0.88);
-  for (let y = oy0; y < oy1; y++) {
-    const base = y * w;
-    for (let x = ox0; x < ox1; x++) d[base + x] -= 0.12;
-  }
-  // 日本語コメント: 植物（欠損）をランダムな穴として作る（未知=黒になることの確認）
-  for (let i = 0; i < 7000; i++) {
-    const x = (Math.random() * w) | 0;
-    const y = (Math.random() * h) | 0;
-    d[y * w + x] = NaN;
-  }
-  window.pushDepthFrame(d);
-};
-
-// 日本語コメント: 単色マップ描画（成功したらtrue）。CV/ML描画より先に走らせる。
-function maybeRenderSemanticMap(nowMs) {
-  if (!semantic.enabled) return false;
-  if (!semantic.latestDepth) return false;
-  if (typeof window.renderSemanticMap !== 'function') return false;
-  if (nowMs < semantic.lastRenderAtMs + semantic.renderIntervalMs) return true;
-  semantic.lastRenderAtMs = nowMs;
-
-  try {
-    const st = window.renderSemanticMap({
-      depth: semantic.latestDepth,
-      width: semantic.width,
-      height: semantic.height,
-      canvas: cvCanvas,
-      ...semantic.params,
-    });
-    semantic.stats.safe = st.safeCount;
-    semantic.stats.obstacle = st.obstacleCount;
-    semantic.stats.unknown = st.unknownCount;
-    semantic.stats.total = st.total;
-  } catch (_) {
-    // 日本語コメント: 失敗時はフォールバック（既存処理は止めない）
-    return false;
-  }
-  return true;
+/* =====================
+   Utility
+===================== */
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
 }
 
-/* ===== Three.js ===== */
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x000000);
-
-const camera3D = new THREE.PerspectiveCamera(
-  60, window.innerWidth / window.innerHeight, 0.1, 1000
-);
-camera3D.position.set(0, 5, 15);
-camera3D.lookAt(0,0,0);
-
-const renderer = new THREE.WebGLRenderer({ alpha:true, antialias:false });
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
-// 日本語コメント: いまは「エッジ + COCO-SSD」を主役にするので、Three.js描画は停止してGPU負荷を下げる
-renderer.domElement.style.display = 'none';
-
-/* ===== Wireframe（LineSegmentsを1本に集約） ===== */
-// 日本語コメント: 「毎フレームLineを大量生成→GCでカクつく」を防ぐため、1つのBufferGeometryを更新する
-const MAX_SEGMENTS = 220; // 日本語コメント: 安全上限（多すぎるとCPU/GPUが辛い）
-const positions = new Float32Array(MAX_SEGMENTS * 2 * 3);
-
-const wireGeom = new THREE.BufferGeometry();
-const wirePosAttr = new THREE.BufferAttribute(positions, 3);
-wirePosAttr.setUsage(THREE.DynamicDrawUsage);
-wireGeom.setAttribute('position', wirePosAttr);
-wireGeom.setDrawRange(0, 0);
-
-// 日本語コメント: AI優先（白黒）なので、3D線の色も白（ただし現状3D描画は停止）
-const wireMat = new THREE.LineBasicMaterial({ color: 0xffffff });
-const wire = new THREE.LineSegments(wireGeom, wireMat);
-// 日本語コメント: 動的ジオメトリはバウンディング更新が追いつかず「見えてるのにカリングされる」ことがあるので無効化
-wire.frustumCulled = false;
-scene.add(wire);
-
-/* ===== 粗い立方体（ボクセル風）描画 ===== */
-// 日本語コメント: 「一番検知したもの」を最小限の立方体で粗く表現する（面は描かずワイヤフレーム表示）
-const MAX_VOXELS = 96; // 日本語コメント: 上限（iPhone向けに控えめ）
-const voxelGeom = new THREE.BoxGeometry(1, 1, 1);
-const voxelMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
-const voxelMesh = new THREE.InstancedMesh(voxelGeom, voxelMat, MAX_VOXELS);
-voxelMesh.frustumCulled = false;
-voxelMesh.count = 0;
-voxelMesh.visible = false;
-scene.add(voxelMesh);
-
-/* ===== 最小限表示（ノイズ抑制） ===== */
-// 日本語コメント: 「必要最小限のキャプチャ」= できるだけ少ない線で構造を表す（長い線・安定した線・重複排除）
-const MAX_RENDER_SEGMENTS = 80;             // 表示上限（少ないほどスッキリ）
-const TRACK_MIN_SCORE_TO_RENDER = 2;        // 連続検出された線だけ描く（フリッカ/ノイズ抑制）
-const RENDER_MIN_LEN_RATIO = 0.16;          // 画面サイズに対する最小長（短いゴミ線を抑制）
-const DEDUP_OFFSET_PX = 8;                  // 同一直線（近い水平/垂直）のまとめ判定
-const DEDUP_GAP_PX = 16;                    // 多少離れても同一扱いにするギャップ許容
-const MAX_BOXES = 7;                        // 日本語コメント: 立方体（ワイヤ）として描く最大数
-const BOX_DEDUP_CENTER_PX = 18;             // 日本語コメント: 近い矩形は同一扱いにして間引く
-
-// 日本語コメント: ロボットの障害物検知想定の「最小限表示」
-// - 一番目立つ（大きい・安定・画面中央下に近い）ものだけを「避けるべき障害物」とみなす
-// - それ以外（遠景の窓枠/壁の模様/細かいノイズ）は描かない
-const OBSTACLE_ONLY = true;
-const OBSTACLE_BORDER_MARGIN_PX = 10; // 画面端のフレーム/窓枠を避ける
-const OBSTACLE_BOTTOM_START = 0.45;   // 画面下寄りを「近い障害物」優先にする（0..1）
-const OBSTACLE_CENTER_MIN = 0.25;     // 中央からのズレ許容（小さいほど中央重視）
-const EDGE_DIM_ALPHA = 0.70;          // 日本語コメント: 障害物以外のエッジは暗くして「避けなくていいもの」を目立たせない
-const EDGE_FULLFRAME = true;          // 日本語コメント: Agent browser想定：全画面エッジ（A）を常に見せる
-
-// 日本語コメント: 余計な割り当てを避けるため、候補/採用インデックス配列を再利用
-const candidateIdx = [];
-const keptIdx = [];
-const rects = []; // 日本語コメント: 推定矩形（リストを再利用）
-const keptRects = [];
-const tmpObj3D = new THREE.Object3D();
-
-/* ===== モード（軽量優先） ===== */
-// 日本語コメント: ユーザー要望に合わせて「エッジ + COCO-SSD」中心にする
-// - エッジ抽出（Canny）は比較的軽い（低解像度＋間引き前提）
-// - COCO-SSDは重いので低頻度＆手動ON
-// - Hough/線分トラッキング/3DワイヤはデフォルトOFF（将来戻せるようコードは残す）
-const EDGE_AND_ML_ONLY = true;
-const ENABLE_HOUGH = false;
-// 日本語コメント: 探査機（ロボット）側の「最小衝突回避」用（左右どちらに避けるか）
-const ENABLE_HAZARD_STEER = true;
-const HAZARD_ROI_Y_START = 0.60; // 下40%を見る
-const HAZARD_BINS = 9;          // 横分割数（おすすめ）
-const HAZARD_GRAD_THRESH = 40;  // 小さい勾配は無視（ノイズ除去）
-
-/* ===== 状態 ===== */
-const state = {
-  cvReady: false,
-  // 日本語コメント: CV処理の内部解像度（iPhone向けに抑える）
-  procW: 0,
-  procH: 0,
-  // 日本語コメント: CV処理のスロットリング（一定msごとに実行）
-  nextCvAtMs: 0,
-  cvIntervalMs: 90, // 約11fps相当（20fps以上の描画を維持しやすい）
-  // 日本語コメント: ワールド座標変換スケール（処理解像度に応じて設定）
-  worldScale: 0.02,
-  depthScale: 0.02,
-  // 日本語コメント: デバッグ用（最小限の可視化。UIポリッシュはしない）
-  lastHoughRows: 0,
-  lastDetected: 0,
-  lastTracks: 0,
-  lastRendered: 0,
-  lastBoxes: 0,
-  lastVoxels: 0,
-  lastObstacleScore: 0,
-  lastEdgeNZ: 0,
-  lastGrayMean: 0,
-  lastBlurMean: 0,
-  lastVideoReadyState: 0,
-  lastVideoPaused: true,
-  fps: 0,
-  nextUiAtMs: 0,
-  // 日本語コメント: VideoCapture.read()は「videoの現在サイズ」とMatサイズが一致しないと例外になるため追従する
-  videoW: 0,
-  videoH: 0,
-  // 日本語コメント: 静止（フリーズ）モード：CV更新/トラック更新を止めてワイヤを固定（安定＆CPU削減）
-  frozen: false,
-  frozenAtMs: 0,
-  lastTapMs: 0,
-  // 日本語コメント: デバッグ表示（必要時のみ。デフォルトOFF）
-  debugEdges: true,
-  // 日本語コメント: 一部環境でVideoCaptureが黒フレームになるためフォールバックを用意
-  captureMode: 'videoCapture', // 'videoCapture' | 'canvas'
-  blackStreak: 0,
-  // 日本語コメント: 3D描画は停止（エッジ + COCO-SSDのみで障害物検知する）
-  boxMode: false,
-  voxelMode: false,
-  nextBoxesAtMs: 0,
-  boxesIntervalMs: 140, // 日本語コメント: 箱推定は重いのでCVより少し遅めでもOK
-
-  // 日本語コメント: COCO-SSD（TF.js）による物体位置推定（任意・重いのでONデマンド）
-  // - OpenCVの直線/矩形だけだと「障害物（物体そのもの）」の位置は弱い
-  // - COCO-SSDのBBoxを使って「避けるべき1つ」をより直接的に拾う
-  mlEnabled: false,
-  mlReady: false,
-  mlLoading: false,
-  mlInFlight: false,
-  mlNextAtMs: 0,
-  mlIntervalMs: 450, // 日本語コメント: iPhone Safariを想定して低頻度（2〜3fps相当）
-  mlMinScore: 0.55,
-  mlLastClass: '',
-  mlLastScore: 0,
-  mlLastBox: null, // {x,y,w,h} in video pixel coords
-};
-
-// 日本語コメント: Agent browserのVision向けにUIを最小化（必要ならUで表示）
-let uiVisible = false;
-document.getElementById('ui').style.display = uiVisible ? 'block' : 'none';
-
-// 日本語コメント: COCO-SSDの対象クラス（必要なら調整）
-// - 「避けるべき障害物」を想定して、人工物中心でフィルタ
-// - personは“人工物のみ”の制約に合わせてデフォルト除外（必要ならtrueへ）
-const ML_ALLOW_PERSON = true;
-const ML_ALLOWED = new Set([
-  'chair', 'couch', 'bed', 'dining table',
-  'tv', 'laptop', 'keyboard', 'mouse',
-  'refrigerator', 'microwave', 'oven', 'sink',
-  'toilet', 'potted plant', // 室内障害物としては有用（植物は人工物でないが障害物になりうる）
-  'bottle', 'cup', 'backpack', 'suitcase',
-  'book', 'vase', 'dog', 'cat', 'bird', 'horse', 'cow', 'elephant', 'bear',
-]);
-
-let tfRef = null;
-let cocoRef = null;
-
-function updateMlButton() {
-  if (!mlBtn) return;
-  const status = state.mlEnabled
-    ? (state.mlReady ? 'ON' : 'Loading...')
-    : 'OFF';
-  mlBtn.textContent = `COCO-SSD: ${status}`;
-  mlBtn.disabled = state.mlLoading;
-  mlBtn.style.opacity = state.mlEnabled ? '1' : '0.85';
+function log(msg, obj) {
+  const line = obj
+    ? msg + "\n" + JSON.stringify(obj, null, 2)
+    : msg;
+  console.log(line);
+  logEl.textContent = line;
 }
 
-function toggleMl() {
-  state.mlEnabled = !state.mlEnabled;
-  if (state.mlEnabled) {
-    ensureCocoSsdLoaded().catch(() => {
-      state.mlEnabled = false;
-      state.mlReady = false;
-      state.mlLoading = false;
-      updateMlButton();
-    });
-  } else {
-    state.mlLastClass = '';
-    state.mlLastScore = 0;
-    state.mlLastBox = null;
-    state.lastObstacleScore = 0;
-  }
-  updateMlButton();
-}
-
-function loadScriptOnce(src) {
-  // 日本語コメント: 単体HTMLのまま、必要時だけ外部JSを読み込む（初期ロード/CPU/メモリを守る）
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-src="${src}"]`);
-    if (existing) {
-      existing.addEventListener('load', () => resolve(), { once: true });
-      existing.addEventListener('error', () => reject(new Error(`failed: ${src}`)), { once: true });
-      // すでに読み込み完了している場合
-      if (existing.dataset.loaded === '1') resolve();
-      return;
-    }
-    const s = document.createElement('script');
-    s.src = src;
-    s.async = true;
-    s.dataset.src = src;
-    s.addEventListener('load', () => { s.dataset.loaded = '1'; resolve(); }, { once: true });
-    s.addEventListener('error', () => reject(new Error(`failed: ${src}`)), { once: true });
-    document.head.appendChild(s);
-  });
-}
-
-async function ensureCocoSsdLoaded() {
-  if (state.mlReady) return;
-  if (state.mlLoading) return;
-  state.mlLoading = true;
-  updateMlButton();
-
-  // 日本語コメント: CDN依存（オフライン不可）。iPhone Safariでも動きやすいliteモデルを使う
-  // - tfjs本体
-  // - coco-ssdモデル
-  await loadScriptOnce('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
-  await loadScriptOnce('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
-
-  tfRef = window.tf;
-  cocoRef = window.cocoSsd;
-
-  if (!tfRef || !cocoRef) {
-    state.mlLoading = false;
-    throw new Error('TF.js or coco-ssd not available');
-  }
-
-  // 日本語コメント: 可能ならWebGLを使う（Safariは環境で変動するので失敗しても継続）
-  try { await tfRef.setBackend('webgl'); } catch (_) {}
-  try { await tfRef.ready(); } catch (_) {}
-
-  state.mlModel = await cocoRef.load({ base: 'lite_mobilenet_v2' });
-  state.mlReady = true;
-  state.mlLoading = false;
-  updateMlButton();
-}
-
-if (mlBtn) {
-  const handleMlTap = (ev) => {
-    ev.preventDefault();
-    toggleMl();
+/* =====================
+   観測生成（Zenn思想の核）
+===================== */
+function buildObservation() {
+  return {
+    position: {
+      x: robot.x.toFixed(1),
+      y: robot.y.toFixed(1)
+    },
+    velocity: robot.vLin.toFixed(2),
+    auto: robot.autoMode,
+    note: "demo observation"
   };
-  mlBtn.addEventListener('pointerdown', handleMlTap);
-  mlBtn.addEventListener('click', (ev) => ev.preventDefault());
-}
-updateMlButton();
-
-function shouldKeepMlClass(name) {
-  if (name === 'person') return ML_ALLOW_PERSON;
-  return ML_ALLOWED.has(name);
 }
 
-async function runCocoOnce(nowMs) {
-  if (!state.mlEnabled) return;
-  if (!state.mlReady) return;
-  if (nowMs < state.mlNextAtMs) return;
-  state.mlNextAtMs = nowMs + state.mlIntervalMs;
-  if (state.mlInFlight) return;
+/* =====================
+   Gemma 呼び出し（Gキー）
+===================== */
+async function askGemmaDecision() {
+  const obs = buildObservation();
+  log("SEND TO GEMMA", obs);
 
-  if (!state.cvReady || state.procW === 0 || state.procH === 0) return;
-  if (video.videoWidth === 0 || video.videoHeight === 0) return;
-
-  // 日本語コメント: 低頻度＆最大1個だけ拾う（最小限の障害物）
-  // - 入力は低解像度のgrabCanvasに固定して、COCO-SSDのコストを抑える
-  // - bbox座標はgrabCanvas座標（procW/procH）になる
-  state.mlInFlight = true;
-  let preds = [];
   try {
-    // 日本語コメント: COCO用に低解像度フレームを作る（ML間引きなので許容）
-    grabCtx.drawImage(video, 0, 0, state.procW, state.procH);
-    preds = await state.mlModel.detect(grabCanvas, 6);
-  } catch (_) {
-    state.mlInFlight = false;
-    return;
-  }
+    const res = await fetch(DECISION_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(obs)
+    });
 
-  let best = null;
-  for (let i = 0; i < preds.length; i += 1) {
-    const p = preds[i];
-    if (!p || !p.bbox) continue;
-    if (p.score < state.mlMinScore) continue;
-    if (!shouldKeepMlClass(p.class)) continue;
+    const decision = await res.json();
+    log("GEMMA RESPONSE", decision);
+    applyDecision(decision);
 
-    const [x, y, w, h] = p.bbox;
-    // 日本語コメント: 画面下寄り＆大きいものを優先（ロボットの“直前の障害物”想定）
-    const cy = y + h * 0.5;
-    const area = w * h;
-    const bottomW = clamp01((cy - (OBSTACLE_BOTTOM_START * state.procH)) / Math.max(1, state.procH * 0.5));
-    const score = p.score * (0.25 + 0.75 * bottomW) * (1 + area / Math.max(1, (state.procW * state.procH)) * 2.0);
-    if (!best || score > best._score) {
-      best = { ...p, _score: score };
-    }
-  }
-
-  if (!best) {
-    state.mlLastClass = '';
-    state.mlLastScore = 0;
-    state.mlLastBox = null;
-    state.lastObstacleScore = 0;
-    state.mlInFlight = false;
-    return;
-  }
-
-  state.mlLastClass = best.class;
-  state.mlLastScore = best.score;
-  const [x, y, w, h] = best.bbox;
-  state.mlLastBox = { x, y, w, h };
-  // 日本語コメント: UI用の障害物スコア（比較値）を保持
-  state.lastObstacleScore = Math.round((best._score || 0) * 1000);
-  // 音声挨拶
-  if (typeof autoGreetDetection === 'function') {
-    autoGreetDetection();
-  }
-  state.mlInFlight = false;
-}
-
-/* ===== Resize ===== */
-function resize(){
-  camera3D.aspect = window.innerWidth / window.innerHeight;
-  camera3D.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-
-  // 日本語コメント: 画面回転などで処理解像度を再計算（頻繁には起きないのでMat再確保OK）
-  if (state.cvReady) {
-    setupCvProcessingSize();
-  }
-}
-window.addEventListener("resize", resize);
-resize();
-
-/* ===== OpenCV Mat（再利用してGC圧を低減） ===== */
-let cap = null;
-let srcRGBA = null;     // 元フレーム
-let procRGBA = null;    // 低解像度フレーム
-let gray = null;        // グレースケール
-let blur = null;        // 平滑化
-let edges = null;       // エッジ
-let lines = null;       // Houghの出力（サイズは内部で変わる）
-let procSize = null;    // 日本語コメント: resize用Sizeを再利用（毎フレームnewしない）
-let blurKSize = null;   // 日本語コメント: GaussianBlurのカーネルサイズ
-let dilateKernel = null; // 日本語コメント: エッジ接続用（Houghを出やすくする）
-// 日本語コメント: 衝突回避（勾配）用Matは再利用してGC圧を下げる
-let gradX = null;
-let gradY = null;
-let absX = null;
-let absY = null;
-let grad = null;
-
-// 日本語コメント: 衝突回避出力（探査機側が送る最小データ相当）
-const hazard = {
-  columns: new Float32Array(HAZARD_BINS),
-  bestSteer: 0, // -1..+1
-  hazardScore: 0, // 0..1
-};
-
-// 日本語コメント: VideoCaptureが黒フレームになる環境向けのフォールバック（drawImage→ImageData）
-const grabCanvas = document.createElement('canvas');
-const grabCtx = grabCanvas.getContext('2d', { willReadFrequently: true });
-
-/* ===== 安定化（線分トラッキング） ===== */
-// 日本語コメント: フレーム間で線分を保持し、指数平滑で落ち着かせる
-const TRACK_TTL_SEC = 0.45;
-const TRACK_SMOOTH = 0.35;
-const TRACK_MATCH_DIST_PX = 14; // 処理解像度座標での許容距離
-const tracks = [];
-
-// 日本語コメント: オブジェクトプール（毎回newしない）
-const segPool = [];
-const detected = [];
-
-// 日本語コメント: Mapは毎回作らず再利用（GC圧の低減）
-const hBins = new Map();
-const vBins = new Map();
-
-function allocSeg() {
-  return segPool.pop() || { x1:0, y1:0, x2:0, y2:0, o:'h', len:0 };
-}
-function releaseDetected() {
-  while (detected.length) segPool.push(detected.pop());
-}
-
-function setupCvProcessingSize() {
-  // 日本語コメント: 入力映像のアスペクトを維持しつつ、内部処理解像度を小さくする
-  const vw = video.videoWidth || 640;
-  const vh = video.videoHeight || 480;
-  const aspect = vw / vh;
-
-  // 日本語コメント: iPhone向け：横幅320〜420程度を目安に（端末が強ければ増やしてもOK）
-  const targetW = Math.max(240, Math.min(420, Math.floor(window.innerWidth * 0.75)));
-  const targetH = Math.floor(targetW / aspect);
-
-  state.procW = targetW;
-  state.procH = Math.max(180, Math.min(360, targetH));
-
-  cvCanvas.width = state.procW;
-  cvCanvas.height = state.procH;
-  grabCanvas.width = state.procW;
-  grabCanvas.height = state.procH;
-
-  // 日本語コメント: 疑似3Dの見た目が極端に変わらないようスケールを処理解像度に合わせて調整
-  state.worldScale = 0.02 * (window.innerWidth / state.procW);
-  state.depthScale = state.worldScale;
-
-  // 日本語コメント: Matを作り直す（リサイズ時のみで、毎フレームではない）
-  if (procRGBA) procRGBA.delete();
-  if (gray) gray.delete();
-  if (blur) blur.delete();
-  if (edges) edges.delete();
-  if (lines) lines.delete();
-
-  procRGBA = new cv.Mat(state.procH, state.procW, cv.CV_8UC4);
-  gray = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-  blur = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-  edges = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-  lines = new cv.Mat();
-  if (gradX) gradX.delete();
-  if (gradY) gradY.delete();
-  if (absX) absX.delete();
-  if (absY) absY.delete();
-  if (grad) grad.delete();
-  gradX = new cv.Mat(state.procH, state.procW, cv.CV_16S);
-  gradY = new cv.Mat(state.procH, state.procW, cv.CV_16S);
-  absX = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-  absY = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-  grad = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-
-  // 日本語コメント: OpenCVのSizeオブジェクトも使い回す（毎フレームの生成を避ける）
-  procSize = new cv.Size(state.procW, state.procH);
-  if (!blurKSize) blurKSize = new cv.Size(5, 5);
-  if (!dilateKernel) {
-    // 日本語コメント: 3x3膨張でエッジの途切れをつなぐ（Houghが0本になりがちな環境の救済）
-    dilateKernel = cv.Mat.ones(3, 3, cv.CV_8U);
+  } catch (e) {
+    log("API ERROR: " + e.message);
   }
 }
 
-function initCvOnceReady() {
-  if (state.cvReady) return;
-  if (!cv || !cv.Mat) return;
-  if (video.videoWidth === 0) return;
-
-  // 日本語コメント: VideoCaptureはMatを再利用できるので、cv.imreadよりメモリ効率が良い
-  cap = new cv.VideoCapture(video);
-  state.videoW = video.videoWidth;
-  state.videoH = video.videoHeight;
-  srcRGBA = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC4);
-
-  setupCvProcessingSize();
-  state.cvReady = true;
-}
-
-function syncVideoMatIfNeeded() {
-  // 日本語コメント: PCブラウザ/端末回転/カメラ切替でvideoサイズが後から変わることがある
-  // → その場合、cap.read(Mat)が「Bad size of input mat」を投げるのでMatを作り直す
-  if (!state.cvReady) return;
-  if (video.videoWidth === 0) return;
-
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  // 日本語コメント: Matのrows/colsとvideoサイズの両方で判定（状態変化に強くする）
-  const matOk = srcRGBA && srcRGBA.cols === vw && srcRGBA.rows === vh;
-  if (vw === state.videoW && vh === state.videoH && matOk) return;
-
-  state.videoW = vw;
-  state.videoH = vh;
-
-  if (srcRGBA) srcRGBA.delete();
-  srcRGBA = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC4);
-
-  // 日本語コメント: VideoCapture自体も内部状態を持つため、サイズ変化時は作り直して安全側に倒す
-  cap = new cv.VideoCapture(video);
-
-  // 日本語コメント: 入力アスペクトが変わった可能性があるので処理解像度も追従
-  setupCvProcessingSize();
-}
-
-function clamp01(v) { return Math.max(0, Math.min(1, v)); }
-function lerp(a,b,t){ return a + (b-a)*t; }
-
-function axisDeltaDeg(dx, dy) {
-  const ang = Math.atan2(dy, dx);
-  const deg = Math.abs(ang) * 180 / Math.PI;
-  const mod90 = deg % 90;
-  return Math.min(mod90, 90 - mod90);
-}
-
-function extractSegmentsFromHough() {
-  // 日本語コメント: ここでは「人工物っぽい線」だけを残す（長い・水平/垂直・連結可能）
-  releaseDetected();
-
-  const w = state.procW;
-  const h = state.procH;
-
-  // 日本語コメント: 閾値は処理解像度に依存するため、相対的に設定
-  const minLen = Math.max(24, Math.floor(Math.min(w, h) * 0.10));
-  // 日本語コメント: PCカメラは歪み/傾きが出やすいので少し緩める（iPhoneはここを下げてもOK）
-  const maxAngle = 18; // 度（Manhattan仮定）
-
-  // 日本語コメント: マージ用の許容（水平はy、垂直はxで束ねる）
-  const mergeTol = 6;
-  const gapTol = 10;
-
-  hBins.clear();
-  vBins.clear();
-
-  const n = lines.rows;
-  const data = lines.data32S;
-
-  for (let i = 0; i < n; i += 1) {
-    const x1 = data[i * 4 + 0];
-    const y1 = data[i * 4 + 1];
-    const x2 = data[i * 4 + 2];
-    const y2 = data[i * 4 + 3];
-
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const len = Math.hypot(dx, dy);
-    if (len < minLen) continue;
-
-    const dAxis = axisDeltaDeg(dx, dy);
-    if (dAxis > maxAngle) continue;
-
-    const isH = Math.abs(dx) >= Math.abs(dy);
-
-    if (isH) {
-      // 日本語コメント: 水平線はyで束ね、x範囲をマージ
-      const y = (y1 + y2) * 0.5;
-      const bin = Math.round(y / mergeTol);
-      const list = hBins.get(bin) || [];
-
-      const ax1 = Math.min(x1, x2);
-      const ax2 = Math.max(x1, x2);
-
-      let merged = false;
-      for (let j = 0; j < list.length; j += 1) {
-        const s = list[j];
-        if (Math.abs(s.y - y) > mergeTol) continue;
-        const overlaps = !(ax2 < s.x1 - gapTol || ax1 > s.x2 + gapTol);
-        if (!overlaps) continue;
-        s.y = (s.y + y) * 0.5;
-        s.x1 = Math.min(s.x1, ax1);
-        s.x2 = Math.max(s.x2, ax2);
-        merged = true;
-        break;
-      }
-      if (!merged) list.push({ y, x1: ax1, x2: ax2 });
-      if (!hBins.has(bin)) hBins.set(bin, list);
-    } else {
-      // 日本語コメント: 垂直線はxで束ね、y範囲をマージ
-      const x = (x1 + x2) * 0.5;
-      const bin = Math.round(x / mergeTol);
-      const list = vBins.get(bin) || [];
-
-      const ay1 = Math.min(y1, y2);
-      const ay2 = Math.max(y1, y2);
-
-      let merged = false;
-      for (let j = 0; j < list.length; j += 1) {
-        const s = list[j];
-        if (Math.abs(s.x - x) > mergeTol) continue;
-        const overlaps = !(ay2 < s.y1 - gapTol || ay1 > s.y2 + gapTol);
-        if (!overlaps) continue;
-        s.x = (s.x + x) * 0.5;
-        s.y1 = Math.min(s.y1, ay1);
-        s.y2 = Math.max(s.y2, ay2);
-        merged = true;
-        break;
-      }
-      if (!merged) list.push({ x, y1: ay1, y2: ay2 });
-      if (!vBins.has(bin)) vBins.set(bin, list);
-    }
-  }
-
-  // 日本語コメント: マージ結果をセグメントに変換
-  hBins.forEach((list) => {
-    for (let i = 0; i < list.length; i += 1) {
-      const s = list[i];
-      const seg = allocSeg();
-      seg.x1 = s.x1; seg.y1 = s.y;
-      seg.x2 = s.x2; seg.y2 = s.y;
-      seg.o = 'h';
-      seg.len = Math.abs(s.x2 - s.x1);
-      detected.push(seg);
-    }
-  });
-
-  vBins.forEach((list) => {
-    for (let i = 0; i < list.length; i += 1) {
-      const s = list[i];
-      const seg = allocSeg();
-      seg.x1 = s.x; seg.y1 = s.y1;
-      seg.x2 = s.x; seg.y2 = s.y2;
-      seg.o = 'v';
-      seg.len = Math.abs(s.y2 - s.y1);
-      detected.push(seg);
-    }
-  });
-
-  // 日本語コメント: 長い線優先で上限をかける（処理爆発防止）
-  detected.sort((a, b) => b.len - a.len);
-  if (detected.length > MAX_SEGMENTS) detected.length = MAX_SEGMENTS;
-}
-
-function updateTracks(dtSec) {
-  // 日本語コメント: 既存トラックを減衰
-  for (let i = 0; i < tracks.length; i += 1) {
-    tracks[i].ttl -= dtSec;
-    tracks[i].matched = false;
-    // 日本語コメント: 検出が途切れたらスコアを落として描画対象から外す（ノイズ線が残り続けるのを防ぐ）
-    tracks[i].score = Math.max(0, tracks[i].score - dtSec * 2.5);
-  }
-
-  const matchDist2 = TRACK_MATCH_DIST_PX * TRACK_MATCH_DIST_PX;
-
-  // 日本語コメント: 新しい検出を既存トラックに割り当て（近いものに吸着）
-  for (let i = 0; i < detected.length; i += 1) {
-    const seg = detected[i];
-    const mx = (seg.x1 + seg.x2) * 0.5;
-    const my = (seg.y1 + seg.y2) * 0.5;
-
-    let bestIdx = -1;
-    let bestScore = Infinity;
-
-    for (let j = 0; j < tracks.length; j += 1) {
-      const t = tracks[j];
-      if (t.o !== seg.o) continue;
-      if (t.matched) continue;
-
-      const tx = (t.x1 + t.x2) * 0.5;
-      const ty = (t.y1 + t.y2) * 0.5;
-      const dx = mx - tx;
-      const dy = my - ty;
-      const d2 = dx * dx + dy * dy;
-      if (d2 > matchDist2) continue;
-
-      // 日本語コメント: 長さが近いほど良い（ノイズ吸着を抑える）
-      const lenDiff = Math.abs(seg.len - t.len);
-      const score = d2 + lenDiff * 0.5;
-      if (score < bestScore) {
-        bestScore = score;
-        bestIdx = j;
-      }
-    }
-
-    if (bestIdx >= 0) {
-      const t = tracks[bestIdx];
-      const a = TRACK_SMOOTH;
-      t.x1 = lerp(t.x1, seg.x1, a);
-      t.y1 = lerp(t.y1, seg.y1, a);
-      t.x2 = lerp(t.x2, seg.x2, a);
-      t.y2 = lerp(t.y2, seg.y2, a);
-      t.len = lerp(t.len, seg.len, a);
-      t.ttl = TRACK_TTL_SEC;
-      t.score = Math.min(6, t.score + 1); // 日本語コメント: 安定して見えた線ほど優先（上限あり）
-      t.matched = true;
-    } else {
-      tracks.push({
-        x1: seg.x1, y1: seg.y1, x2: seg.x2, y2: seg.y2,
-        o: seg.o,
-        len: seg.len,
-        score: 1,
-        ttl: TRACK_TTL_SEC,
-        matched: true,
-      });
-    }
-  }
-
-  // 日本語コメント: 何かが暴れても配列が膨張し続けないよう上限を設定（爆発防止）
-  const hardCap = MAX_SEGMENTS * 2;
-  if (tracks.length > hardCap) tracks.length = hardCap;
-
-  // 日本語コメント: 期限切れトラックを削除（配列スパムを避けるため後ろから）
-  for (let i = tracks.length - 1; i >= 0; i -= 1) {
-    if (tracks[i].ttl <= 0) tracks.splice(i, 1);
-  }
-}
-
-function estimateRectsFromTracks(w, h) {
-  // 日本語コメント: 安定していて長い水平/垂直線から「矩形」を推定する（BOX/VOX共通）
-  // 日本語コメント: まずCOCO-SSDが有効でBBoxが取れているなら、それを「障害物候補」として優先する
-  // - ロボット用途では「物体そのもの」の位置が重要で、線分矩形より直接的
-  if (OBSTACLE_ONLY && state.mlEnabled && state.mlReady && state.mlLastBox && state.mlLastScore >= state.mlMinScore) {
-    const b = state.mlLastBox;
-
-    // 日本語コメント: ここではmlLastBoxは処理解像度座標（procW/procH）なので、そのまま使う
-    const x1 = b.x;
-    const y1 = b.y;
-    const x2 = b.x + b.w;
-    const y2 = b.y + b.h;
-
-    const cx = (x1 + x2) * 0.5;
-    const cy = (y1 + y2) * 0.5;
-    const rw = Math.abs(x2 - x1);
-    const rh = Math.abs(y2 - y1);
-
-    const borderDist = Math.min(x1, y1, (w - x2), (h - y2));
-    const borderW = clamp01((borderDist - OBSTACLE_BORDER_MARGIN_PX) / (OBSTACLE_BORDER_MARGIN_PX * 2));
-
-    const centerDist = Math.abs(cx - w * 0.5) / Math.max(1e-6, (w * 0.5));
-    const centerW = clamp01(1 - centerDist);
-
-    const bottomStartPx = OBSTACLE_BOTTOM_START * h;
-    const bottomW = clamp01((cy - bottomStartPx) / Math.max(1, (h - bottomStartPx)));
-
-    const area = rw * rh;
-    const normArea = area / Math.max(1, (w * h));
-
-    // 日本語コメント: 端っこ/上の方のBBoxは「避けなくていい（背景）」として棄却
-    const passes =
-      borderDist >= OBSTACLE_BORDER_MARGIN_PX &&
-      cy >= (OBSTACLE_BOTTOM_START * h) &&
-      centerDist <= Math.max(OBSTACLE_CENTER_MIN, 0.35);
-
-    if (passes && (!state.mlLastClass || shouldKeepMlClass(state.mlLastClass))) {
-      keptRects.length = 0;
-      rects.length = 0;
-      const obsScore =
-        (state.mlLastScore) *
-        (0.35 + 0.65 * bottomW) *
-        (0.25 + 0.75 * centerW) *
-        (0.25 + 1.75 * normArea) *
-        (0.10 + 0.90 * borderW);
-
-      keptRects.push({
-        x1, y1, x2, y2,
-        w: rw, h: rh,
-        cx, cy,
-        score: obsScore,
-        obsScore,
-        borderDist,
-        normArea,
-        centerW,
-        bottomW,
-      });
-      state.lastBoxes = 1;
-      state.lastObstacleScore = obsScore;
-      return;
-    }
-  }
-
-  const minLen = Math.max(28, Math.floor(Math.min(w, h) * RENDER_MIN_LEN_RATIO));
-  const binPx = 8;
-  const topK = 14; // 日本語コメント: 組み合わせ爆発を抑える
-  const lineTol = 10; // 日本語コメント: 角の許容（px）
-  const minRect = Math.max(34, Math.floor(Math.min(w, h) * 0.12));
-
-  // 日本語コメント: 近い線をまとめて最長だけ残す（ノイズ抑制＋計算量削減）
-  const hb = new Map(); // key: ybin -> {y,x1,x2,len,score}
-  const vb = new Map(); // key: xbin -> {x,y1,y2,len,score}
-
-  for (let i = 0; i < tracks.length; i += 1) {
-    const t = tracks[i];
-    if (t.ttl <= 0) continue;
-    if (t.len < minLen) continue;
-    if (t.score < TRACK_MIN_SCORE_TO_RENDER) continue;
-
-    if (t.o === 'h') {
-      const y = (t.y1 + t.y2) * 0.5;
-      const ybin = Math.round(y / binPx);
-      const x1 = Math.min(t.x1, t.x2);
-      const x2 = Math.max(t.x1, t.x2);
-      const len = x2 - x1;
-      const prev = hb.get(ybin);
-      if (!prev || len > prev.len) hb.set(ybin, { y, x1, x2, len, score: t.score });
-    } else {
-      const x = (t.x1 + t.x2) * 0.5;
-      const xbin = Math.round(x / binPx);
-      const y1 = Math.min(t.y1, t.y2);
-      const y2 = Math.max(t.y1, t.y2);
-      const len = y2 - y1;
-      const prev = vb.get(xbin);
-      if (!prev || len > prev.len) vb.set(xbin, { x, y1, y2, len, score: t.score });
-    }
-  }
-
-  const hs = Array.from(hb.values()).sort((a, b) => b.len - a.len).slice(0, topK);
-  const vs = Array.from(vb.values()).sort((a, b) => b.len - a.len).slice(0, topK);
-
-  rects.length = 0;
-  keptRects.length = 0;
-
-  // 日本語コメント: 水平2本×垂直2本の組み合わせで矩形候補を作る
-  for (let hi = 0; hi < hs.length; hi += 1) {
-    for (let hj = hi + 1; hj < hs.length; hj += 1) {
-      const top = hs[hi].y < hs[hj].y ? hs[hi] : hs[hj];
-      const bot = hs[hi].y < hs[hj].y ? hs[hj] : hs[hi];
-      const height = bot.y - top.y;
-      if (height < minRect) continue;
-
-      for (let vi = 0; vi < vs.length; vi += 1) {
-        for (let vj = vi + 1; vj < vs.length; vj += 1) {
-          const left = vs[vi].x < vs[vj].x ? vs[vi] : vs[vj];
-          const right = vs[vi].x < vs[vj].x ? vs[vj] : vs[vi];
-          const width = right.x - left.x;
-          if (width < minRect) continue;
-
-          const topCovers = top.x1 <= left.x + lineTol && top.x2 >= right.x - lineTol;
-          const botCovers = bot.x1 <= left.x + lineTol && bot.x2 >= right.x - lineTol;
-          const leftCovers = left.y1 <= top.y + lineTol && left.y2 >= bot.y - lineTol;
-          const rightCovers = right.y1 <= top.y + lineTol && right.y2 >= bot.y - lineTol;
-          if (!topCovers || !botCovers || !leftCovers || !rightCovers) continue;
-
-          const score =
-            (top.len + bot.len + left.len + right.len) *
-            Math.min(top.score, bot.score, left.score, right.score);
-
-          // 日本語コメント: ロボットの障害物検知向けのスコアリング
-          // - 大きい矩形（面積）
-          // - 安定している（線分スコア由来のscore）
-          // - 画面中央下に近い（進行方向の直前にある=避けるべき、と仮定）
-          // - 画面端のフレーム（窓枠など）は避ける
-          const cx = (left.x + right.x) * 0.5;
-          const cy = (top.y + bot.y) * 0.5;
-
-          const area = width * height;
-          const normArea = area / Math.max(1, (w * h));
-
-          const centerDist = Math.abs(cx - w * 0.5) / Math.max(1e-6, (w * 0.5));
-          const centerW = clamp01(1 - centerDist);
-
-          const bottomStartPx = OBSTACLE_BOTTOM_START * h;
-          const bottomW = clamp01((cy - bottomStartPx) / Math.max(1, (h - bottomStartPx)));
-
-          const borderDist = Math.min(left.x, top.y, (w - right.x), (h - bot.y));
-          const borderW = clamp01((borderDist - OBSTACLE_BORDER_MARGIN_PX) / (OBSTACLE_BORDER_MARGIN_PX * 2));
-
-          const aspect = Math.max(width / Math.max(1e-6, height), height / Math.max(1e-6, width));
-          const aspectW = 1 / (1 + Math.max(0, aspect - 1) * 0.7);
-
-          const obsScore =
-            score *
-            (0.35 + 0.65 * bottomW) *
-            (0.25 + 0.75 * centerW) *
-            (0.25 + 1.75 * normArea) *
-            (0.10 + 0.90 * borderW) *
-            aspectW;
-
-          rects.push({
-            x1: left.x, y1: top.y,
-            x2: right.x, y2: bot.y,
-            score,
-            obsScore,
-            cx,
-            cy,
-            w: width,
-            h: height,
-            centerW,
-            bottomW,
-            borderDist,
-            normArea,
-          });
-        }
-      }
-    }
-  }
-
-  // 日本語コメント: 障害物候補を優先フィルタ（中央下/端から距離）→なければ全体から選ぶ
-  const centerDistMax = OBSTACLE_CENTER_MIN;
-  const preferred = rects.filter((r) => {
-    const centerDist = Math.abs(r.cx - w * 0.5) / Math.max(1e-6, (w * 0.5));
-    return (
-      r.borderDist >= OBSTACLE_BORDER_MARGIN_PX &&
-      r.cy >= (OBSTACLE_BOTTOM_START * h) &&
-      centerDist <= centerDistMax
-    );
-  });
-
-  const pool = preferred.length ? preferred : rects;
-  pool.sort((a, b) => (b.obsScore ?? b.score) - (a.obsScore ?? a.score));
-
-  // 日本語コメント: 「避けるべき障害物」だけ描画（最小限）
-  if (OBSTACLE_ONLY) {
-    if (pool.length) keptRects.push(pool[0]);
-    state.lastBoxes = keptRects.length;
-    state.lastObstacleScore = pool.length ? (pool[0].obsScore ?? 0) : 0;
-    return;
-  }
-
-  // 日本語コメント: 近い中心の矩形は1つにまとめる（同じ箱が何重にも出るのを抑制）
-  for (let i = 0; i < pool.length; i += 1) {
-    if (keptRects.length >= MAX_BOXES) break;
-    const r = pool[i];
-    let dup = false;
-    for (let j = 0; j < keptRects.length; j += 1) {
-      const k = keptRects[j];
-      const dx = r.cx - k.cx;
-      const dy = r.cy - k.cy;
-      if ((dx * dx + dy * dy) < (BOX_DEDUP_CENTER_PX * BOX_DEDUP_CENTER_PX)) {
-        dup = true;
-        break;
-      }
-    }
-    if (!dup) keptRects.push(r);
-  }
-  state.lastBoxes = keptRects.length;
-  state.lastObstacleScore = pool.length ? (pool[0].obsScore ?? 0) : 0;
-}
-
-function writeWireframeGeometry() {
-  // 日本語コメント: tracks→positionsへコピー（オブジェクト生成しない）
-  const w = state.procW;
-  const h = state.procH;
-  const s = state.worldScale;
-  const dz = state.depthScale;
-
-  // 日本語コメント: モードに応じて表示を切替（無駄な描画をしない）
-  if (state.voxelMode) {
-    wire.visible = false;
-    voxelMesh.visible = true;
-  } else {
-    voxelMesh.visible = false;
-    wire.visible = true;
-  }
-
-  // 日本語コメント: 粗い立方体（ボクセル風）モード
-  //  - 矩形（2D）を1つ選び、固定深度で押し出して箱にする
-  //  - 箱の「エッジ上」だけに少数のボクセルを配置して、最小限で“立体”を表す
-  if (state.voxelMode) {
-    const nowMs = performance.now();
-
-    // 日本語コメント: ボクセルは「箱推定」と同じタイミングで更新（毎フレーム更新しない）
-    if (nowMs >= state.nextBoxesAtMs) {
-      state.nextBoxesAtMs = nowMs + state.boxesIntervalMs;
-      estimateRectsFromTracks(w, h);
-    }
-
-    // 日本語コメント: keptRects[0]（最良）からボクセルを作る
-    const best = keptRects.length ? keptRects[0] : null;
-    if (!best) {
-      voxelMesh.count = 0;
-      state.lastVoxels = 0;
-      return;
-    }
-
-    // 日本語コメント: VOXは箱を軸揃えにして扱う（z=y由来の歪みを避け、粗い表示を安定させる）
-    const xL = (best.x1 - w * 0.5) * s;
-    const xR = (best.x2 - w * 0.5) * s;
-    const yT = -(best.y1 - h * 0.5) * s;
-    const yB = -(best.y2 - h * 0.5) * s;
-    const zF = -(((best.y1 + best.y2) * 0.5)) * dz;
-    const depthPx = Math.max(14, Math.min(90, 0.40 * Math.min(best.w, best.h)));
-    const zB = zF + (-depthPx * dz);
-
-    const dx = Math.abs(xR - xL);
-    const dy = Math.abs(yB - yT);
-    const dzWorld = Math.abs(zB - zF);
-
-    // 日本語コメント: 最小限の粗さ（2〜5分割程度）でボクセル数を抑える
-    const nx = Math.max(2, Math.min(5, Math.round(dx / (Math.max(dy, dx, dzWorld) / 3))));
-    const ny = Math.max(2, Math.min(5, Math.round(dy / (Math.max(dy, dx, dzWorld) / 3))));
-    const nz = Math.max(2, Math.min(4, Math.round(dzWorld / (Math.max(dy, dx, dzWorld) / 3))));
-
-    const stepX = nx > 1 ? dx / (nx - 1) : dx;
-    const stepY = ny > 1 ? dy / (ny - 1) : dy;
-    const stepZ = nz > 1 ? dzWorld / (nz - 1) : dzWorld;
-    const cubeSize = 0.42 * Math.max(0.0001, Math.min(stepX, stepY, stepZ));
-
-    const minX = Math.min(xL, xR);
-    const minY = Math.min(yT, yB);
-    const minZ = Math.min(zF, zB);
-
-    let count = 0;
-    for (let iz = 0; iz < nz; iz += 1) {
-      for (let iy = 0; iy < ny; iy += 1) {
-        for (let ix = 0; ix < nx; ix += 1) {
-          // 日本語コメント: エッジ上だけ配置（境界フラグが2つ以上）
-          const bx = (ix === 0 || ix === nx - 1) ? 1 : 0;
-          const by = (iy === 0 || iy === ny - 1) ? 1 : 0;
-          const bz = (iz === 0 || iz === nz - 1) ? 1 : 0;
-          if ((bx + by + bz) < 2) continue;
-          if (count >= MAX_VOXELS) break;
-
-          const px = minX + ix * stepX;
-          const py = minY + iy * stepY;
-          const pz = minZ + iz * stepZ;
-
-          tmpObj3D.position.set(px, py, pz);
-          tmpObj3D.scale.set(cubeSize, cubeSize, cubeSize);
-          tmpObj3D.rotation.set(0, 0, 0);
-          tmpObj3D.updateMatrix();
-          voxelMesh.setMatrixAt(count, tmpObj3D.matrix);
-          count += 1;
-        }
-        if (count >= MAX_VOXELS) break;
-      }
-      if (count >= MAX_VOXELS) break;
-    }
-
-    voxelMesh.count = count;
-    voxelMesh.instanceMatrix.needsUpdate = true;
-    state.lastVoxels = count;
-    return;
-  }
-
-  // 日本語コメント: 立方体ワイヤフレーム化（疑似3D）：
-  //  - 「水平/垂直の閉ループ（矩形）」を推定し、固定深度で押し出して立方体として描く
-  //  - 真の3D復元（SLAM/Depth/カメラ姿勢推定）はしていない（見た目の“箱”）
-  if (state.boxMode) {
-    const nowMs = performance.now();
-
-    if (nowMs >= state.nextBoxesAtMs) {
-      state.nextBoxesAtMs = nowMs + state.boxesIntervalMs;
-      estimateRectsFromTracks(w, h);
-    }
-
-    // 日本語コメント: 矩形→「キューブ」ワイヤ（12辺）を書き込む（1箱=12セグメント）
-    // - 以前は矩形の縦横に応じた直方体寄り（さらにzがy由来で歪みやすい）だった
-    // - ここでは「一辺が同じ長さ」のキューブとして描く（より立体感が出る）
-    let segCount = 0;
-    let k = 0;
-
-    for (let i = 0; i < keptRects.length; i += 1) {
-      const r = keptRects[i];
-
-      // 日本語コメント: 矩形の中心をキューブ中心として扱う（疑似3Dのzは画面yの中心から）
-      const cxPx = (r.x1 + r.x2) * 0.5;
-      const cyPx = (r.y1 + r.y2) * 0.5;
-      const cx = (cxPx - w * 0.5) * s;
-      const cy = -(cyPx - h * 0.5) * s;
-      const cz = -(cyPx) * dz;
-
-      // 日本語コメント: 一辺=画面上の短辺（歪み/遠近に強く、平らになりにくい）
-      const widthW = Math.abs((r.x2 - r.x1) * s);
-      const heightW = Math.abs((r.y2 - r.y1) * s);
-      const side = Math.max(0.35, Math.min(6.0, Math.min(widthW, heightW)));
-      const half = side * 0.5;
-
-      // corners（axis-aligned cube）
-      const A = { x: cx - half, y: cy + half, z: cz + half }; // left-top-front
-      const B = { x: cx + half, y: cy + half, z: cz + half }; // right-top-front
-      const C = { x: cx + half, y: cy - half, z: cz + half }; // right-bottom-front
-      const D = { x: cx - half, y: cy - half, z: cz + half }; // left-bottom-front
-
-      const A2 = { x: cx - half, y: cy + half, z: cz - half }; // left-top-back
-      const B2 = { x: cx + half, y: cy + half, z: cz - half }; // right-top-back
-      const C2 = { x: cx + half, y: cy - half, z: cz - half }; // right-bottom-back
-      const D2 = { x: cx - half, y: cy - half, z: cz - half }; // left-bottom-back
-
-      const pushSeg = (p, q) => {
-        if (segCount >= MAX_SEGMENTS) return false;
-        positions[k++] = p.x; positions[k++] = p.y; positions[k++] = p.z;
-        positions[k++] = q.x; positions[k++] = q.y; positions[k++] = q.z;
-        segCount += 1;
-        return true;
-      };
-
-      if (!pushSeg(A, B)) break;
-      if (!pushSeg(B, C)) break;
-      if (!pushSeg(C, D)) break;
-      if (!pushSeg(D, A)) break;
-
-      if (!pushSeg(A2, B2)) break;
-      if (!pushSeg(B2, C2)) break;
-      if (!pushSeg(C2, D2)) break;
-      if (!pushSeg(D2, A2)) break;
-
-      if (!pushSeg(A, A2)) break;
-      if (!pushSeg(B, B2)) break;
-      if (!pushSeg(C, C2)) break;
-      if (!pushSeg(D, D2)) break;
-    }
-
-    state.lastBoxes = keptRects.length;
-    state.lastRendered = segCount;
-    wireGeom.setDrawRange(0, segCount * 2);
-    wirePosAttr.needsUpdate = true;
-    return;
-  }
-
-  // 日本語コメント: 障害物モード（最小限）では、LINESの「大量線分表示」はしない（避けなくていいものを描かない）
-  if (OBSTACLE_ONLY) {
-    wireGeom.setDrawRange(0, 0);
-    wirePosAttr.needsUpdate = true;
-    state.lastRendered = 0;
-    return;
-  }
-
-  // 日本語コメント: 表示用フィルタ（短い/不安定/重複）を落として「必要最小限」にする
-  const renderMinLen = Math.max(24, Math.floor(Math.min(w, h) * RENDER_MIN_LEN_RATIO));
-
-  candidateIdx.length = 0;
-  for (let i = 0; i < tracks.length; i += 1) {
-    const t = tracks[i];
-    if (t.ttl <= 0) continue;
-    if (t.len < renderMinLen) continue;
-    if (t.score < TRACK_MIN_SCORE_TO_RENDER) continue;
-    candidateIdx.push(i);
-  }
-
-  // 日本語コメント: 長い線から優先して採用（少ない線で骨格を作る）
-  candidateIdx.sort((ia, ib) => tracks[ib].len - tracks[ia].len);
-
-  keptIdx.length = 0;
-  for (let ci = 0; ci < candidateIdx.length; ci += 1) {
-    if (keptIdx.length >= MAX_RENDER_SEGMENTS) break;
-    const idx = candidateIdx[ci];
-    const t = tracks[idx];
-
-    // 日本語コメント: 近い平行線で、投影が重なるものは「重複」とみなして落とす（最小化）
-    const o = t.o;
-    const off = o === 'h' ? (t.y1 + t.y2) * 0.5 : (t.x1 + t.x2) * 0.5;
-    const a1 = o === 'h' ? Math.min(t.x1, t.x2) : Math.min(t.y1, t.y2);
-    const a2 = o === 'h' ? Math.max(t.x1, t.x2) : Math.max(t.y1, t.y2);
-
-    let dup = false;
-    for (let ki = 0; ki < keptIdx.length; ki += 1) {
-      const kt = tracks[keptIdx[ki]];
-      if (kt.o !== o) continue;
-      const koff = o === 'h' ? (kt.y1 + kt.y2) * 0.5 : (kt.x1 + kt.x2) * 0.5;
-      if (Math.abs(off - koff) > DEDUP_OFFSET_PX) continue;
-      const kb1 = o === 'h' ? Math.min(kt.x1, kt.x2) : Math.min(kt.y1, kt.y2);
-      const kb2 = o === 'h' ? Math.max(kt.x1, kt.x2) : Math.max(kt.y1, kt.y2);
-      const overlaps = !(a2 < kb1 - DEDUP_GAP_PX || a1 > kb2 + DEDUP_GAP_PX);
-      if (!overlaps) continue;
-      dup = true;
+/* =====================
+   Decision → 行動
+===================== */
+function applyDecision(d) {
+  if (!d || !d.action) return;
+
+  switch (d.action) {
+    case "move_forward":
+      sendRobotCommand(0.3, 0);
       break;
-    }
-    if (dup) continue;
-    keptIdx.push(idx);
-  }
-
-  // 日本語コメント: 採用した線だけを書き込む
-  let k = 0;
-  for (let i = 0; i < keptIdx.length; i += 1) {
-    const t = tracks[keptIdx[i]];
-
-    // 日本語コメント: 疑似3D変換（奥行きをyで表現）
-    const x1 = (t.x1 - w * 0.5) * s;
-    const y1 = -(t.y1 - h * 0.5) * s;
-    const z1 = -(t.y1) * dz;
-
-    const x2 = (t.x2 - w * 0.5) * s;
-    const y2 = -(t.y2 - h * 0.5) * s;
-    const z2 = -(t.y2) * dz;
-
-    positions[k++] = x1; positions[k++] = y1; positions[k++] = z1;
-    positions[k++] = x2; positions[k++] = y2; positions[k++] = z2;
-  }
-
-  state.lastRendered = keptIdx.length;
-  wireGeom.setDrawRange(0, keptIdx.length * 2);
-  wirePosAttr.needsUpdate = true;
-}
-
-function runCvOnce(nowMs) {
-  if (!state.cvReady) return;
-  if (nowMs < state.nextCvAtMs) return;
-  state.nextCvAtMs = nowMs + state.cvIntervalMs;
-
-  // 日本語コメント: フリーズ中はCVを止める（静止画像モード相当）
-  if (state.frozen) return;
-
-  // 日本語コメント: videoが「再生可能状態」になっていないと、read()が黒フレームになる/失敗する環境がある
-  state.lastVideoReadyState = video.readyState;
-  state.lastVideoPaused = video.paused;
-  if (video.readyState < 2 || video.paused) return;
-
-  // 日本語コメント: videoサイズ変化に追従（例外防止）
-  syncVideoMatIfNeeded();
-
-  // 日本語コメント: 取得モード（VideoCapture優先、ダメならCanvasフォールバック）
-  let gotFrame = false;
-
-  if (state.captureMode === 'videoCapture') {
-    try {
-      // 日本語コメント: カメラ→Mat（再利用）
-      // ※一部ブラウザでは解像度がフレーム間で揺れることがあり、read()が例外を投げるので保険をかける
-      cap.read(srcRGBA);
-      // 日本語コメント: 低解像度に縮小して処理コストを下げる（INTER_AREAで縮小品質を確保）
-      cv.resize(srcRGBA, procRGBA, procSize, 0, 0, cv.INTER_AREA);
-      gotFrame = true;
-    } catch (e) {
-      // 日本語コメント: まずサイズ追従で復旧を試み、次フレームに回す
-      syncVideoMatIfNeeded();
-      gotFrame = false;
-    }
-  }
-
-  if (!gotFrame || state.captureMode === 'canvas') {
-    // 日本語コメント: drawImage→getImageDataは重いが「黒フレーム」問題の切り分け/救済として有効
-    try {
-      grabCtx.drawImage(video, 0, 0, state.procW, state.procH);
-      const img = grabCtx.getImageData(0, 0, state.procW, state.procH);
-      procRGBA.data.set(img.data);
-      gotFrame = true;
-    } catch (e) {
-      // 日本語コメント: 取得できない場合は何もしない（次フレームで再試行）
-      gotFrame = false;
-    }
-  }
-
-  if (!gotFrame) return;
-
-  cv.cvtColor(procRGBA, gray, cv.COLOR_RGBA2GRAY);
-
-  // 日本語コメント: ちょい平滑化でノイズ/チラつきを抑える（コストは低め）
-  cv.GaussianBlur(gray, blur, blurKSize, 1.1, 1.1, cv.BORDER_DEFAULT);
-  state.lastBlurMean = cv.mean(blur)[0];
-
-  // 日本語コメント: 露出/コントラスト差でエッジが出ないケース対策（軽量なヒストグラム平坦化）
-  cv.equalizeHist(blur, gray);
-
-  // 日本語コメント: Cannyの閾値は控えめ（人工物の輪郭を狙う）
-  cv.Canny(gray, edges, 35, 95);
-  cv.dilate(edges, edges, dilateKernel);
-  state.lastEdgeNZ = cv.countNonZero(edges);
-  // 日本語コメント: 画が黒い/止まっている切り分け用（平均輝度）
-  state.lastGrayMean = cv.mean(gray)[0];
-
-  // 日本語コメント: 衝突回避（左右操舵）用の危険度ヒートマップを作る
-  // - 岩のような不規則物体でも「局所的な勾配（起伏/段差/テクスチャ）」は増えやすい
-  // - 画面下部だけを見て、横方向に危険度を集計して左右の回避判断にする
-  if (ENABLE_HAZARD_STEER) {
-    cv.Sobel(gray, gradX, cv.CV_16S, 1, 0, 3, 1, 0, cv.BORDER_DEFAULT);
-    cv.Sobel(gray, gradY, cv.CV_16S, 0, 1, 3, 1, 0, cv.BORDER_DEFAULT);
-    cv.convertScaleAbs(gradX, absX);
-    cv.convertScaleAbs(gradY, absY);
-    // 日本語コメント: |Gx|+|Gy|（軽量）で勾配強度を作る
-    cv.addWeighted(absX, 1.0, absY, 1.0, 0.0, grad);
-
-    // 日本語コメント: 小さい勾配は0にしてノイズを落とす（閾値は環境で調整）
-    cv.threshold(grad, grad, HAZARD_GRAD_THRESH, 255, cv.THRESH_TOZERO);
-
-    // 日本語コメント: ROI下部の勾配強度を列ごとに積算（余計なMat生成はしない）
-    hazard.columns.fill(0);
-    const w = state.procW;
-    const h = state.procH;
-    const y0 = Math.floor(h * HAZARD_ROI_Y_START);
-    const binW = w / HAZARD_BINS;
-    const data = grad.data; // 8U
-
-    for (let y = y0; y < h; y += 1) {
-      let rowOff = y * w;
-      for (let x = 0; x < w; x += 1) {
-        const v = data[rowOff + x];
-        // 日本語コメント: 0が多いので分岐で節約
-        if (v === 0) continue;
-        const bi = Math.min(HAZARD_BINS - 1, Math.floor(x / binW));
-        hazard.columns[bi] += v;
-      }
-    }
-
-    // 日本語コメント: 0..1に正規化し、最小列＝安全方向として操舵を決める
-    let maxV = 0;
-    for (let i = 0; i < HAZARD_BINS; i += 1) {
-      if (hazard.columns[i] > maxV) maxV = hazard.columns[i];
-    }
-    if (maxV < 1e-6) {
-      hazard.hazardScore = 0;
-      hazard.bestSteer = 0;
-    } else {
-      let bestI = 0;
-      let bestVal = Infinity;
-      for (let i = 0; i < HAZARD_BINS; i += 1) {
-        const nv = hazard.columns[i] / maxV;
-        hazard.columns[i] = nv;
-        if (nv < bestVal) {
-          bestVal = nv;
-          bestI = i;
-        }
-      }
-      hazard.hazardScore = 1; // 日本語コメント: ここでは相対指標なので1固定（必要ならmaxVで別指標化）
-      const mid = (HAZARD_BINS - 1) / 2;
-      hazard.bestSteer = (bestI - mid) / mid; // -1..+1
-    }
-  }
-
-  // 日本語コメント: 「黒フレームが続く」場合は自動でフォールバックへ切替
-  if (state.lastBlurMean < 1.0 && state.lastEdgeNZ === 0) {
-    state.blackStreak += 1;
-  } else {
-    state.blackStreak = 0;
-  }
-  if (state.captureMode === 'videoCapture' && state.blackStreak >= 5) {
-    state.captureMode = 'canvas';
-  }
-
-  // 日本語コメント: HoughLinesP/線分トラッキングは重いので、必要な時だけ有効化
-  if (ENABLE_HOUGH) {
-    cv.HoughLinesP(edges, lines, 1, Math.PI / 180, 28, 18, 22);
-    state.lastHoughRows = lines.rows;
-    extractSegmentsFromHough();
-    state.lastDetected = detected.length;
-  } else {
-    state.lastHoughRows = 0;
-    state.lastDetected = 0;
-  }
-
-  // 日本語コメント: エッジ表示（障害物検知の可視化）
-  if (state.debugEdges) {
-    cvCanvas.style.display = 'block';
-    cv.imshow(cvCanvas, edges);
-
-    // 日本語コメント: 可能なら「避けるべき物体（COCO-SSDのBBox）」以外を暗くする
-    const hasMlObs =
-      state.mlEnabled &&
-      state.mlReady &&
-      state.mlLastBox &&
-      state.mlLastScore >= state.mlMinScore;
-
-    // 日本語コメント: Aモード（全画面エッジ）は“暗転しない”で、BBoxだけを最小限に重ねる
-    if (!EDGE_FULLFRAME) {
-      const dimA = hasMlObs ? EDGE_DIM_ALPHA : 0.25;
-      overlayCtx.save();
-      overlayCtx.globalCompositeOperation = 'source-over';
-      overlayCtx.fillStyle = `rgba(0,0,0,${dimA})`;
-      overlayCtx.fillRect(0, 0, state.procW, state.procH);
-      overlayCtx.restore();
-    }
-
-    if (hasMlObs) {
-      // 日本語コメント: COCO-SSDはproc座標で保持しているので、そのまま描画できる
-      const b = state.mlLastBox;
-      const x = Math.max(0, Math.min(state.procW - 1, b.x));
-      const y = Math.max(0, Math.min(state.procH - 1, b.y));
-      const wBox = Math.max(1, Math.min(state.procW - x, b.w));
-      const hBox = Math.max(1, Math.min(state.procH - y, b.h));
-
-      // 日本語コメント: AI優先の白黒（BBoxも白）。色の依存を避ける
-      overlayCtx.strokeStyle = 'rgba(255,255,255,0.95)';
-      overlayCtx.lineWidth = 2;
-      overlayCtx.strokeRect(x + 0.5, y + 0.5, wBox - 1, hBox - 1);
-
-      // 日本語コメント: ラベルは最小限（物体名と確度）
-      const label = `${state.mlLastClass} ${(state.mlLastScore * 100).toFixed(0)}%`;
-      overlayCtx.font = '12px monospace';
-      const pad = 3;
-      const tw = Math.min(state.procW, overlayCtx.measureText(label).width + pad * 2);
-      const th = 16;
-      const lx = x;
-      const ly = Math.max(0, y - th);
-      overlayCtx.fillStyle = 'rgba(255,255,255,0.85)';
-      overlayCtx.fillRect(lx, ly, tw, th);
-      overlayCtx.fillStyle = 'rgba(0,0,0,0.95)';
-      overlayCtx.fillText(label, lx + pad, ly + 12);
-    }
-
-    // 日本語コメント: 探査機側の回避判断をAIが読めるように、下部に最小のバー（9分割）を描く
-    if (ENABLE_HAZARD_STEER) {
-      const w = state.procW;
-      const h = state.procH;
-      const barH = Math.max(10, Math.floor(h * 0.06));
-      const y = h - barH;
-      overlayCtx.save();
-      overlayCtx.globalCompositeOperation = 'source-over';
-      overlayCtx.fillStyle = 'rgba(0,0,0,0.65)';
-      overlayCtx.fillRect(0, y, w, barH);
-
-      // 日本語コメント: 危険=白を濃く（0..1）。安全=薄い
-      for (let i = 0; i < HAZARD_BINS; i += 1) {
-        const x0 = Math.floor((i * w) / HAZARD_BINS);
-        const x1 = Math.floor(((i + 1) * w) / HAZARD_BINS);
-        const v = hazard.columns[i];
-        const a = 0.12 + 0.80 * v;
-        overlayCtx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
-        overlayCtx.fillRect(x0 + 1, y + 2, Math.max(1, x1 - x0 - 2), barH - 4);
-      }
-
-      // 日本語コメント: 推奨操舵方向（白線）を1本だけ表示
-      const steerX = Math.floor(((hazard.bestSteer + 1) * 0.5) * (w - 1));
-      overlayCtx.strokeStyle = 'rgba(255,255,255,0.95)';
-      overlayCtx.lineWidth = 2;
-      overlayCtx.beginPath();
-      overlayCtx.moveTo(steerX + 0.5, y + 0.5);
-      overlayCtx.lineTo(steerX + 0.5, y + barH - 0.5);
-      overlayCtx.stroke();
-
-      overlayCtx.restore();
-    }
-  } else {
-    cvCanvas.style.display = 'none';
+    case "turn_left":
+      sendRobotCommand(0.2, 0.6);
+      break;
+    case "turn_right":
+      sendRobotCommand(0.2, -0.6);
+      break;
+    case "stop":
+    default:
+      emergencyStop();
   }
 }
 
-/* ===== Render Loop ===== */
-const clock = new THREE.Clock();
-let fpsFrames = 0;
-let fpsAccMs = 0;
-
-function animate() {
-  requestAnimationFrame(animate);
-
-  const nowMs = performance.now();
-  const dt = Math.min(clock.getDelta(), 0.05);
-  fpsFrames += 1;
-  fpsAccMs += dt * 1000;
-  if (fpsAccMs >= 500) {
-    // 日本語コメント: 0.5秒窓でFPS概算（ログを増やさずに体感の確認用）
-    state.fps = Math.round((fpsFrames * 1000) / fpsAccMs);
-    fpsFrames = 0;
-    fpsAccMs = 0;
-  }
-
-  // 日本語コメント: OpenCV初期化＆video準備を待つ
-  initCvOnceReady();
-
-  // 日本語コメント: Depthが来ている場合は「単色マップ」を最優先で描画し、エッジ/MLは停止してCPUを空ける
-  const semanticRendered = maybeRenderSemanticMap(nowMs);
-
-  // 日本語コメント: CVは間引き実行（描画は毎フレーム）
-  if (!semanticRendered) runCvOnce(nowMs);
-
-  // 日本語コメント: 物体検出（COCO-SSD）はさらに低頻度で実行（async）
-  // - 失敗してもOpenCV側の障害物推定でフォールバックする
-  if (!semanticRendered) runCocoOnce(nowMs);
-
-  // 日本語コメント: CVの検出結果をトラックへ反映（dtで減衰）
-  // 日本語コメント: フリーズ中は「線の減衰」もしない（画面が完全に静止して見える）
-  if (!state.frozen && ENABLE_HOUGH) updateTracks(dt);
-  state.lastTracks = ENABLE_HOUGH ? tracks.length : 0;
-
-  // 日本語コメント: いまはエッジ+MLの2Dオーバーレイが主役なので、3D描画はしない（CPU/GPU節約）
-  if (!EDGE_AND_ML_ONLY) {
-    writeWireframeGeometry();
-    renderer.render(scene, camera3D);
-  }
-
-  // ロボット制御更新
-  if (typeof updateRobotControl === 'function') {
-    updateRobotControl(nowMs);
-  }
-
-  // 日本語コメント: 「何も起きない」時の切り分け用に、最低限の状態をUIへ表示
-  if (nowMs >= state.nextUiAtMs) {
-    state.nextUiAtMs = nowMs + 250;
-    const ui = document.getElementById('ui');
-    ui.style.display = uiVisible ? 'block' : 'none';
-    const vOk = video.videoWidth > 0 ? 'ok' : 'wait';
-    const cvOk = state.cvReady ? 'ok' : 'wait';
-    const mode = (semantic.enabled && semantic.latestDepth) ? 'SemanticMap' : 'Edges';
-    ui.innerHTML =
-      'A-1 Artificial Structure Mapper<br>' +
-      `Mode: ${mode} (S=semantic)<br>` +
-      'iPhone Camera → Edges + COCO-SSD → Obstacle<br>' +
-      `video: ${vOk} (${video.videoWidth}x${video.videoHeight})<br>` +
-      `cv: ${cvOk} (proc ${state.procW}x${state.procH})<br>` +
-      `videoRS: ${state.lastVideoReadyState}, paused: ${state.lastVideoPaused ? 'yes' : 'no'}<br>` +
-      `cap: ${state.captureMode}, black: ${state.blackStreak}<br>` +
-      `blurMean: ${state.lastBlurMean.toFixed(1)}, grayMean: ${state.lastGrayMean.toFixed(1)}<br>` +
-      `edgesNZ: ${state.lastEdgeNZ}<br>` +
-      `steer: ${hazard.bestSteer.toFixed(2)} (L=-1..R=+1)<br>` +
-      `obsScore: ${state.lastObstacleScore.toFixed(0)}<br>` +
-      `ml: ${state.mlEnabled ? (state.mlReady ? 'on' : 'loading') : 'off'} (M), cls: ${state.mlLastClass}, p: ${state.mlLastScore.toFixed(2)}<br>` +
-      `speech: ${typeof speech !== 'undefined' && speech.enabled ? (speech.speaking ? '🔊' : '🔇') : 'OFF'} (H/T)<br>` +
-      `robot: ${typeof robot !== 'undefined' && robot.connected ? '🤖' : 'OFF'} (R/O/X)<br>` +
-      (semantic.latestDepth
-        ? `semantic: safe=${semantic.stats.safe} obs=${semantic.stats.obstacle} unk=${semantic.stats.unknown}<br>`
-        : 'semantic: waiting Depth(Float32Array 640x480[m])<br>') +
-      `fps: ${state.fps}<br>` +
-      `freeze: ${state.frozen ? 'ON' : 'OFF'} (Space / double-tap)<br>` +
-      'tip: S=semantic / U=UI / M=COCO-SSD / D=edges / H=speech / R=robot / G=AI';
-  }
+/* =====================
+   ロボット制御
+===================== */
+function sendRobotCommand(lin, ang) {
+  robot.vLin = clamp(lin, -MAX_LINEAR, MAX_LINEAR);
+  robot.vAng = clamp(ang, -MAX_ANGULAR, MAX_ANGULAR);
 }
 
-cv['onRuntimeInitialized'] = () => {
-  // 日本語コメント: onRuntimeInitializedはOpenCVの準備完了を示すだけなので、描画ループは常駐でOK
-  animate();
-};
-
-/* ===== 静止（フリーズ）トグル ===== */
-function toggleFreeze(nowMs) {
-  state.frozen = !state.frozen;
-  state.frozenAtMs = nowMs;
-  // 日本語コメント: 解除した直後にCVが走りやすいよう、スロットリングをリセット
-  if (!state.frozen) state.nextCvAtMs = 0;
+function emergencyStop() {
+  sendRobotCommand(0, 0);
 }
 
-window.addEventListener('keydown', (ev) => {
-  if (ev.code !== 'Space') return;
-  ev.preventDefault();
-  toggleFreeze(performance.now());
-});
+/* =====================
+   入力
+===================== */
+window.addEventListener("keydown", (ev) => {
+  keys[ev.code] = true;
 
-window.addEventListener('keydown', (ev) => {
-  if (ev.code !== 'KeyD') return;
-  // 日本語コメント: デバッグ（エッジ表示）のトグル。UIを増やさず切り分けできるようにする
-  state.debugEdges = !state.debugEdges;
-});
-
-window.addEventListener('keydown', (ev) => {
-  if (ev.code !== 'KeyU') return;
-  // 日本語コメント: Agent browserのVisionを邪魔しないよう、UIは必要時だけ表示
-  uiVisible = !uiVisible;
-});
-
-window.addEventListener('keydown', (ev) => {
-  if (ev.code !== 'KeyC') return;
-  // 日本語コメント: キャプチャ方式の強制切替（VideoCaptureが黒になる環境向け）
-  state.captureMode = state.captureMode === 'videoCapture' ? 'canvas' : 'videoCapture';
-  state.blackStreak = 0;
-});
-
-window.addEventListener('keydown', (ev) => {
-  if (ev.code !== 'KeyM') return;
-  // 日本語コメント: COCO-SSDのON/OFF（重いので明示的に有効化）
-  toggleMl();
-});
-
-window.addEventListener('keydown', (ev) => {
-  if (ev.code !== 'KeyS') return;
-  // 日本語コメント: Semantic Map（単色マップ）のON/OFF
-  // - Depthが来ている場合はCV/MLを止めて「単色だけ」を表示する（Agentの認識を最優先）
-  semantic.enabled = !semantic.enabled;
-});
-
-window.addEventListener('keydown', (ev) => {
-  if (ev.code !== 'KeyB') return;
-  if (EDGE_AND_ML_ONLY) return;
-  // 日本語コメント: 立方体（ワイヤ）描画と線描画を切替（UIを増やさない）
-  state.voxelMode = false;
-  state.boxMode = !state.boxMode;
-  state.nextBoxesAtMs = 0;
-});
-
-window.addEventListener('keydown', (ev) => {
-  if (ev.code !== 'KeyV') return;
-  if (EDGE_AND_ML_ONLY) return;
-  // 日本語コメント: 「最小限の粗い立方体（ボクセル風）」モード
-  state.voxelMode = !state.voxelMode;
-  if (state.voxelMode) state.boxMode = false;
-  state.nextBoxesAtMs = 0;
-});
-
-// 日本語コメント: iPhoneはキーボードがない前提なのでダブルタップで切替
-renderer.domElement.addEventListener('pointerdown', () => {
-  const nowMs = performance.now();
-  if (nowMs - state.lastTapMs < 280) {
-    toggleFreeze(nowMs);
-    state.lastTapMs = 0;
-    return;
+  if (ev.code === "KeyR") {
+    robot.controlEnabled = !robot.controlEnabled;
   }
-  state.lastTapMs = nowMs;
+  if (ev.code === "KeyO") {
+    robot.autoMode = !robot.autoMode;
+  }
+  if (ev.code === "KeyX") {
+    emergencyStop();
+  }
+  if (ev.code === "KeyG") {
+    askGemmaDecision();
+  }
 });
+
+window.addEventListener("keyup", (ev) => {
+  keys[ev.code] = false;
+});
+
+/* =====================
+   手動操作
+===================== */
+function handleManualKeys() {
+  let lin = 0, ang = 0;
+  if (keys.KeyW || keys.ArrowUp) lin += 1;
+  if (keys.KeyS || keys.ArrowDown) lin -= 1;
+  if (keys.KeyA || keys.ArrowLeft) ang += 1;
+  if (keys.KeyD || keys.ArrowRight) ang -= 1;
+  sendRobotCommand(lin * MAX_LINEAR, ang * MAX_ANGULAR);
+}
+
+/* =====================
+   シミュレーター更新
+===================== */
+let lastUpdate = 0;
+
+function update(now) {
+  requestAnimationFrame(update);
+  if (!robot.controlEnabled) return;
+  if (now - lastUpdate < DT_MS) return;
+  lastUpdate = now;
+
+  if (!robot.autoMode) handleManualKeys();
+
+  const dt = DT_MS / 1000;
+  robot.theta += robot.vAng * dt;
+  robot.x += Math.cos(robot.theta) * robot.vLin * dt * 80;
+  robot.y += Math.sin(robot.theta) * robot.vLin * dt * 80;
+  robot.x = clamp(robot.x, 10, SIM_SIZE-10);
+  robot.y = clamp(robot.y, 10, SIM_SIZE-10);
+
+  robot.trail.push({x: robot.x, y: robot.y});
+  if (robot.trail.length > 300) robot.trail.shift();
+
+  draw();
+}
+
+/* =====================
+   描画
+===================== */
+function draw() {
+  ctx.clearRect(0,0,SIM_SIZE,SIM_SIZE);
+
+  // grid
+  ctx.strokeStyle = "#123";
+  for (let i=0;i<=SIM_SIZE;i+=40){
+    ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,SIM_SIZE); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(SIM_SIZE,i); ctx.stroke();
+  }
+
+  // trail
+  if (robot.trail.length>1){
+    ctx.strokeStyle="#0ff";
+    ctx.beginPath();
+    robot.trail.forEach((p,i)=>{
+      if(i===0) ctx.moveTo(p.x,p.y);
+      else ctx.lineTo(p.x,p.y);
+    });
+    ctx.stroke();
+  }
+
+  // robot
+  ctx.save();
+  ctx.translate(robot.x, robot.y);
+  ctx.rotate(robot.theta);
+  ctx.fillStyle = robot.controlEnabled ? "#0f0" : "#555";
+  ctx.beginPath();
+  ctx.moveTo(12,0);
+  ctx.lineTo(-12,-8);
+  ctx.lineTo(-12,8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  stateEl.textContent =
+    `mode=${robot.autoMode?"AUTO":"MANUAL"} ` +
+    `ctrl=${robot.controlEnabled?"ON":"OFF"} ` +
+    `v=${robot.vLin.toFixed(2)} w=${robot.vAng.toFixed(2)}`;
+}
+
+/* =====================
+   起動
+===================== */
+requestAnimationFrame(update);
 </script>
+
 </body>
 </html>
