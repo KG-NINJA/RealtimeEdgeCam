@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var SIM_SIZE = 300;
+  var SIM_SIZE = 400;
   var robot = {
     controlEnabled: false,
     x: SIM_SIZE / 2, y: SIM_SIZE / 2,
@@ -9,17 +9,30 @@
     lastDecisionAt: 0, isThinking: false
   };
 
-  /* ===== Gemma API通信 (422エラー完全回避版) ===== */
+  var simCanvas = null, simCtx = null;
+
+  function ensureCanvas() {
+    if (simCanvas) return;
+    simCanvas = document.createElement('canvas');
+    simCanvas.width = SIM_SIZE; simCanvas.height = SIM_SIZE;
+    simCanvas.style.position = 'fixed';
+    simCanvas.style.bottom = '10px'; simCanvas.style.right = '10px';
+    simCanvas.style.border = '2px solid #0f0';
+    simCanvas.style.background = 'rgba(0,20,0,0.8)';
+    simCanvas.style.zIndex = '1000';
+    document.body.appendChild(simCanvas);
+    simCtx = simCanvas.getContext('2d');
+  }
+
   async function askGemmaDecision() {
     if (robot.isThinking || !robot.controlEnabled) return;
     robot.isThinking = true;
 
-    // 422エラーの原因「front_dist」を「front_distance」に修正し、
-    // 必須項目「ml_results」を空配列として追加します
+    // 名前を一致させ、ml_resultsを空で送る (422対策)
     const payload = {
-      front_distance: Number(window.state?.lastObstacleScore || 0),
+      front_distance: Number(window.state?.lastObstacleScore || 100),
       speed: Number(robot.vLin || 0),
-      ml_results: [] // 挨拶機能削除のため常に空
+      ml_results: []
     };
 
     try {
@@ -29,24 +42,14 @@
         body: JSON.stringify(payload)
       });
 
-      if (!res.ok) {
-        console.error("422 Error: Check if server field names match 'front_distance' and 'ml_results'");
-        return;
-      }
-
       const json = await res.json();
       const match = json.data[0].match(/\{.*\}/s);
       if (match) {
         const data = JSON.parse(match[0]);
-        
-        // シンプルなアクション反映
-        if (data.action === "move_forward") {
-          robot.vLin = 0.5; robot.vAng = 0;
-        } else if (data.action === "turn_left") {
-          robot.vLin = 0.1; robot.vAng = 1.0;
-        } else {
-          robot.vLin = 0; robot.vAng = 0; // stop
-        }
+        // 動作の反映
+        if (data.action === "move_forward") { robot.vLin = 0.5; robot.vAng = 0; }
+        else if (data.action === "turn_left") { robot.vLin = 0.1; robot.vAng = 1.0; }
+        else { robot.vLin = 0; robot.vAng = 0; }
       }
     } catch (e) {
       console.error("Gemma Error:", e);
@@ -55,38 +58,37 @@
     }
   }
 
-  /* ===== 更新ループ ===== */
   function updateRobotControl(now) {
     if (!robot.controlEnabled) return;
+    ensureCanvas();
 
-    // 2秒ごとに判断
-    if (now - robot.lastDecisionAt > 2000) {
+    if (now - robot.lastDecisionAt > 1500) {
       askGemmaDecision();
       robot.lastDecisionAt = now;
     }
 
+    // 物理演算
     var dt = 0.1;
     robot.theta += robot.vAng * dt;
-    robot.x += Math.cos(robot.theta) * robot.vLin * dt * 60;
-    robot.y += Math.sin(robot.theta) * robot.vLin * dt * 60;
+    robot.x += Math.cos(robot.theta) * robot.vLin * dt * 80;
+    robot.y += Math.sin(robot.theta) * robot.vLin * dt * 80;
 
-    // 描画処理 (simCtxなど既存のものは維持)
-    drawRobot(); 
+    // 描画
+    simCtx.clearRect(0,0,SIM_SIZE,SIM_SIZE);
+    simCtx.save();
+    simCtx.translate(robot.x, robot.y);
+    simCtx.rotate(robot.theta);
+    simCtx.strokeStyle = '#0f0';
+    simCtx.strokeRect(-8, -8, 16, 16);
+    simCtx.restore();
   }
 
-  function drawRobot() {
-    var canvas = document.querySelector('canvas[style*="fixed"]'); 
-    if(!canvas) return;
-    var ctx = canvas.getContext('2d');
-    ctx.clearRect(0,0,SIM_SIZE,SIM_SIZE);
-    ctx.save();
-    ctx.translate(robot.x, robot.y);
-    ctx.rotate(robot.theta);
-    ctx.strokeStyle = '#0f0';
-    ctx.strokeRect(-5, -5, 10, 10); // 簡易的な四角
-    ctx.restore();
-  }
+  window.addEventListener('keydown', (e) => {
+    if(e.code==='KeyR') {
+      robot.controlEnabled = !robot.controlEnabled;
+      if(simCanvas) simCanvas.style.display = robot.controlEnabled ? 'block' : 'none';
+    }
+  });
 
-  window.addEventListener('keydown', (e) => { if(e.code==='KeyR') robot.controlEnabled = !robot.controlEnabled; });
   window.updateRobotControl = updateRobotControl;
 })();
