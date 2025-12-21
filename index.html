@@ -153,6 +153,11 @@ body {
     📍 Last Decision: <span id="last-decision" class="status-neutral">-</span>
   </div>
 
+  <div id="debug-panel" class="controls">
+    <b>🐛 Debug Console:</b><br>
+    <div id="debug-log" style="max-height: 150px; overflow-y: auto; background: #002; padding: 4px; border: 1px solid #033; font-size: 10px; color: #0f0; margin-top: 5px; white-space: pre-wrap; word-wrap: break-word;"></div>
+  </div>
+
   <div class="controls">
     <b>⌨️ 操作キー:</b><br>
     <span style="color: #0f0;">M</span> = ML ON/OFF<br>
@@ -508,44 +513,84 @@ async function askGemmaDecision(nowMs) {
 
   const obs = {
     obstacle_score: state.lastObstacleScore / 1000.0,
-    detected_class: state.mlLastClass,
+    detected_class: state.mlLastClass || 'unknown',
     confidence: state.mlLastScore,
     has_obstacle: state.lastObstacleScore > 500,
   };
 
   updateStatus('gemma-status', 'Asking...', 'warn');
+  console.log('📤 Gemma Request:', JSON.stringify(obs, null, 2));
 
   try {
-    const res = await fetch('https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide', {
+    const url = 'https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide';
+    console.log('🌐 Calling:', url);
+    
+    const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify(obs)
     });
 
-    const decision = await res.json();
+    console.log('📨 Response Status:', res.status, res.statusText);
+    
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+
+    const text = await res.text();
+    console.log('📥 Raw Response:', text);
+    
+    let decision;
+    try {
+      decision = JSON.parse(text);
+    } catch (e) {
+      console.error('❌ JSON Parse Error:', e, 'Raw:', text);
+      throw new Error('Invalid JSON response: ' + text.substring(0, 100));
+    }
+
+    console.log('✅ Parsed Decision:', decision);
     applyGemmaDecision(decision);
     state.gemmaLastDecision = decision.action || 'unknown';
-    updateStatus('gemma-status', decision.action || 'ready', 'good');
+    updateStatus('gemma-status', `${decision.action || 'ready'}`, 'good');
   } catch (e) {
-    console.error('Gemma error:', e);
-    updateStatus('gemma-status', 'Error', 'bad');
+    console.error('❌ Gemma Error:', e.message);
+    updateStatus('gemma-status', `Error: ${e.message.substring(0, 25)}`, 'bad');
   }
 }
 
 function applyGemmaDecision(d) {
-  if (!d || !d.action || !state.robotEnabled) return;
+  if (!d || !state.robotEnabled) {
+    console.log('⏭️  Robot disabled or no decision');
+    return;
+  }
 
-  switch (d.action) {
+  const action = d.action || d.command || d.move;
+  console.log('🤖 Applying action:', action);
+
+  switch (String(action).toLowerCase()) {
     case 'move_forward':
+    case 'move forward':
+    case 'forward':
+      console.log('➡️  Moving forward');
       sendRobotCommand(0.3, 0);
       break;
     case 'turn_left':
+    case 'turn left':
+    case 'left':
+      console.log('⬅️  Turning left');
       sendRobotCommand(0.15, 0.5);
       break;
     case 'turn_right':
+    case 'turn right':
+    case 'right':
+      console.log('➡️  Turning right');
       sendRobotCommand(0.15, -0.5);
       break;
+    case 'stop':
     default:
+      console.log('⏹️  Stopping');
       emergencyStop();
   }
 }
@@ -629,6 +674,34 @@ function drawRobotSim() {
 }
 
 /* ==================== UI更新 ==================== */
+const debugLog = [];
+const MAX_DEBUG_LINES = 20;
+
+function addDebugLog(msg) {
+  debugLog.push('[' + new Date().toLocaleTimeString() + '] ' + msg);
+  if (debugLog.length > MAX_DEBUG_LINES) {
+    debugLog.shift();
+  }
+  const debugPanel = document.getElementById('debug-log');
+  if (debugPanel) {
+    debugPanel.textContent = debugLog.join('\n');
+    debugPanel.scrollTop = debugPanel.scrollHeight;
+  }
+  console.log(msg);
+}
+
+// console.log をオーバーライド
+const originalLog = console.log;
+const originalError = console.error;
+console.log = function(...args) {
+  originalLog.apply(console, args);
+  addDebugLog(args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+};
+console.error = function(...args) {
+  originalError.apply(console, args);
+  addDebugLog('❌ ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+};
+
 function updateStatus(id, text, className) {
   const el = document.getElementById(id);
   if (el) {
