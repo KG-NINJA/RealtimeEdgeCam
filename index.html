@@ -1,170 +1,250 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<title>Camera + COCO-SSD + Gemma</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8" />
+<title>Gemma Decision Control Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-  body { margin:0; background:#000; color:#0ff; font-family:monospace; }
-  video {
-    position: fixed;
-    right: 10px;
-    bottom: 10px;
-    width: 240px;
-    border: 1px solid #345;
-  }
-  canvas {
-    position: fixed;
-    left: 0;
-    top: 0;
+  body {
+    margin: 0;
+    background: #0b0e14;
+    color: #cfd8ff;
+    font-family: monospace;
   }
   #hud {
     position: fixed;
     left: 10px;
     top: 10px;
-    background: rgba(0,0,0,.6);
-    padding: 8px;
-    border: 1px solid #0af;
+    background: rgba(0,0,0,0.7);
+    padding: 10px;
+    border: 1px solid #345;
+    width: 360px;
+  }
+  #log {
     white-space: pre-wrap;
     font-size: 12px;
+    max-height: 240px;
+    overflow-y: auto;
+    margin-top: 6px;
+    color: #9ff;
+  }
+  canvas {
+    display: block;
+    margin: 80px auto 0;
+    background: #05070c;
+    border: 1px solid #234;
   }
 </style>
 </head>
-
 <body>
 
-<div id="hud">Loading...</div>
+<div id="hud">
+  <div><b>Gemma Robot Decision Demo</b></div>
+  <div>G: Ask Gemma / R: Control ON-OFF / X: STOP</div>
+  <div id="state"></div>
+  <div id="log"></div>
+</div>
 
-<video id="video" autoplay playsinline muted></video>
-<canvas id="canvas"></canvas>
-
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+<canvas id="sim" width="400" height="400"></canvas>
 
 <script>
-/* =======================
+/* =====================
    設定
-======================= */
-const DECISION_API =
+===================== */
+const GEMMA_DECISION_API =
   "https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide";
 
-/* =======================
-   要素
-======================= */
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
+const MAX_LINEAR = 0.5;
+const MAX_ANGULAR = 1.0;
+const DT_MS = 100;
+const SIM_SIZE = 400;
+
+/* =====================
+   状態
+===================== */
+const robot = {
+  controlEnabled: true,
+  x: SIM_SIZE / 2,
+  y: SIM_SIZE / 2,
+  theta: 0,
+  vLin: 0,
+  vAng: 0,
+  obstacleScore: 0.0,
+  trail: []
+};
+
+const canvas = document.getElementById("sim");
 const ctx = canvas.getContext("2d");
-const hud = document.getElementById("hud");
+const logEl = document.getElementById("log");
+const stateEl = document.getElementById("state");
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-
-let model = null;
-let lastDetections = [];
-
-/* =======================
-   カメラ起動（クリック必須）
-======================= */
-async function startCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "environment" },
-    audio: false
-  });
-  video.srcObject = stream;
-  await video.play();
-  hud.textContent = "Camera started\nLoading COCO-SSD...";
-  model = await cocoSsd.load();
-  hud.textContent = "COCO-SSD ready\nPress G to ask Gemma";
+/* =====================
+   Utility
+===================== */
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
 }
 
-document.body.addEventListener("click", startCamera, { once: true });
-
-/* =======================
-   検出ループ
-======================= */
-async function detectLoop() {
-  if (model && video.videoWidth > 0) {
-    lastDetections = await model.detect(video);
-  }
-  requestAnimationFrame(detectLoop);
-}
-detectLoop();
-
-/* =======================
-   描画ループ
-======================= */
-function draw() {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  if (video.videoWidth > 0) {
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  }
-
-  ctx.strokeStyle = "#0f0";
-  ctx.lineWidth = 2;
-  ctx.font = "16px monospace";
-
-  for (const d of lastDetections) {
-    const [x,y,w,h] = d.bbox;
-    ctx.strokeRect(x, y, w, h);
-    ctx.fillText(
-      `${d.class} ${(d.score*100).toFixed(1)}%`,
-      x, y > 20 ? y-5 : y+20
-    );
-  }
-
-  requestAnimationFrame(draw);
-}
-draw();
-
-/* =======================
-   危険度 → front_distance
-======================= */
-function computeFrontDistance() {
-  if (lastDetections.length === 0) return 1.0;
-
-  let danger = 0;
-  for (const d of lastDetections) {
-    if (["person","chair","table","tv","laptop"].includes(d.class)) {
-      danger = Math.max(danger, d.score);
-    }
-  }
-  return 1.0 - danger;
+function log(msg, obj) {
+  const line = obj
+    ? msg + "\n" + JSON.stringify(obj, null, 2)
+    : msg;
+  console.log(line);
+  logEl.textContent = line;
 }
 
-/* =======================
-   Gemma に送信
-======================= */
-async function askGemma() {
-  const front = computeFrontDistance();
-  const payload = {
-    front_distance: front,
-    speed: 0
+/* =====================
+   観測生成（Gemmaへ送る）
+===================== */
+function buildObservationForGemma() {
+  return {
+    obstacle_score: robot.obstacleScore,
+    has_obstacle: robot.obstacleScore > 0.5,
+    speed: robot.vLin
   };
+}
 
-  hud.textContent =
-    "SEND TO GEMMA\n" + JSON.stringify(payload, null, 2);
+/* =====================
+   Gemma 呼び出し（Gキー）
+===================== */
+async function askGemmaDecision() {
+  const obs = buildObservationForGemma();
+  log("SEND TO GEMMA", obs);
 
   try {
-    const res = await fetch(DECISION_API, {
+    const res = await fetch(GEMMA_DECISION_API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(obs)
     });
-    const json = await res.json();
-    hud.textContent =
-      "GEMMA RESPONSE\n" + JSON.stringify(json, null, 2);
+
+    const decision = await res.json();
+    log("GEMMA RESPONSE", decision);
+    applyGemmaDecision(decision);
+
   } catch (e) {
-    hud.textContent = "ERROR\n" + e;
+    log("API ERROR: " + e.message);
   }
 }
 
-/* =======================
-   Gキー
-======================= */
-window.addEventListener("keydown", e => {
-  if (e.code === "KeyG") askGemma();
+/* =====================
+   Gemma Decision → 行動
+===================== */
+function applyGemmaDecision(d) {
+  if (!d || !d.action) return;
+
+  switch (d.action) {
+    case "move_forward":
+      sendRobotCommand(0.3, 0);
+      break;
+    case "turn_left":
+      sendRobotCommand(0.2, 0.6);
+      break;
+    case "turn_right":
+      sendRobotCommand(0.2, -0.6);
+      break;
+    case "stop":
+    default:
+      emergencyStop();
+  }
+}
+
+/* =====================
+   ロボット制御
+===================== */
+function sendRobotCommand(lin, ang) {
+  robot.vLin = clamp(lin, -MAX_LINEAR, MAX_LINEAR);
+  robot.vAng = clamp(ang, -MAX_ANGULAR, MAX_ANGULAR);
+}
+
+function emergencyStop() {
+  sendRobotCommand(0, 0);
+}
+
+/* =====================
+   入力
+===================== */
+window.addEventListener("keydown", (ev) => {
+  if (ev.code === "KeyG") askGemmaDecision();
+  if (ev.code === "KeyR") robot.controlEnabled = !robot.controlEnabled;
+  if (ev.code === "KeyX") emergencyStop();
 });
+
+/* =====================
+   シミュレーション更新
+===================== */
+let lastUpdate = 0;
+
+function update(now) {
+  requestAnimationFrame(update);
+  if (!robot.controlEnabled) return;
+  if (now - lastUpdate < DT_MS) return;
+  lastUpdate = now;
+
+  // 仮の障害物スコア（前方に行くほど増える想定）
+  robot.obstacleScore = clamp(robot.y / SIM_SIZE, 0, 1);
+
+  const dt = DT_MS / 1000;
+  robot.theta += robot.vAng * dt;
+  robot.x += Math.cos(robot.theta) * robot.vLin * dt * 80;
+  robot.y += Math.sin(robot.theta) * robot.vLin * dt * 80;
+  robot.x = clamp(robot.x, 10, SIM_SIZE - 10);
+  robot.y = clamp(robot.y, 10, SIM_SIZE - 10);
+
+  robot.trail.push({ x: robot.x, y: robot.y });
+  if (robot.trail.length > 300) robot.trail.shift();
+
+  draw();
+}
+
+/* =====================
+   描画
+===================== */
+function draw() {
+  ctx.clearRect(0, 0, SIM_SIZE, SIM_SIZE);
+
+  // grid
+  ctx.strokeStyle = "#123";
+  for (let i = 0; i <= SIM_SIZE; i += 40) {
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, SIM_SIZE); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(SIM_SIZE, i); ctx.stroke();
+  }
+
+  // trail
+  if (robot.trail.length > 1) {
+    ctx.strokeStyle = "#0ff";
+    ctx.beginPath();
+    robot.trail.forEach((p, i) => {
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    ctx.stroke();
+  }
+
+  // robot
+  ctx.save();
+  ctx.translate(robot.x, robot.y);
+  ctx.rotate(robot.theta);
+  ctx.fillStyle = "#0f0";
+  ctx.beginPath();
+  ctx.moveTo(12, 0);
+  ctx.lineTo(-12, -8);
+  ctx.lineTo(-12, 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  stateEl.textContent =
+    `ctrl=${robot.controlEnabled ? "ON" : "OFF"} ` +
+    `v=${robot.vLin.toFixed(2)} ` +
+    `w=${robot.vAng.toFixed(2)} ` +
+    `obstacle=${robot.obstacleScore.toFixed(2)}`;
+}
+
+/* =====================
+   起動
+===================== */
+requestAnimationFrame(update);
 </script>
 
 </body>
