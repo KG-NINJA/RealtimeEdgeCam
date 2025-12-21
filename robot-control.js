@@ -1,4 +1,3 @@
-// 日本語コメント: A-1 Mapper 統合用ロボット制御モジュール（422エラー修正済み完全版）
 (function () {
   'use strict';
 
@@ -35,16 +34,16 @@
     if (robot.isThinking || !robot.controlEnabled) return;
     robot.isThinking = true;
 
-    // 型と名前を FastAPI の SensorInput クラスに 100% 合わせる
+    // Python側の SensorInput クラスの定義に 100% 合わせる
     const payload = {
-      // ⚠️ エラーログにあった front_dist ではなく front_distance に修正
+      // ⚠️ front_dist ではなく front_distance に修正
       front_distance: Number(window.state?.lastObstacleScore || 0),
       speed: Number(robot.vLin || 0),
-      // ⚠️ Field required だった ml_results を必ず配列として追加
+      // ⚠️ 必須項目 ml_results を必ず配列として追加
       ml_results: window.state?.mlLastClass ? [String(window.state.mlLastClass)] : []
     };
 
-    console.log("🚀 Sending Payload to Gemma:", payload);
+    console.log("🚀 Gemma Request:", payload);
 
     try {
       const res = await fetch("/decide", {
@@ -67,7 +66,7 @@
       if (match) {
         const data = JSON.parse(match[0]);
         
-        // 挨拶表示
+        // 挨拶表示 (UI連携)
         if (data.message) {
           const log = document.getElementById('gemma-log');
           if (log) log.innerHTML = `<div style="color:#0ff; border-left:3px solid #f0f; padding-left:8px; margin-bottom:4px;">🤖 ${data.message}</div>` + log.innerHTML;
@@ -82,7 +81,7 @@
         }
       }
     } catch (e) {
-      console.error("❌ Connection failed:", e);
+      console.error("❌ Gemma Error:", e);
     } finally {
       robot.isThinking = false;
     }
@@ -92,12 +91,13 @@
     if (!robot.controlEnabled) return;
     ensureCanvas();
 
-    // 2秒ごとに判断
+    // 2秒ごとにAIに判断を仰ぐ
     if (now - robot.lastDecisionAt > 2000) {
       askGemmaDecision();
       robot.lastDecisionAt = now;
     }
 
+    // 物理演算
     var dt = 0.1;
     robot.theta += robot.vAng * dt;
     robot.x += Math.cos(robot.theta) * robot.vLin * dt * 60;
@@ -109,6 +109,7 @@
     simCtx.translate(robot.x, robot.y);
     simCtx.rotate(robot.theta);
     simCtx.strokeStyle = '#0f0';
+    simCtx.lineWidth = 2;
     simCtx.beginPath();
     simCtx.moveTo(12, 0); simCtx.lineTo(-10, 8); simCtx.lineTo(-10, -8);
     simCtx.closePath();
@@ -120,6 +121,7 @@
     if (ev.code === 'KeyR') {
       robot.controlEnabled = !robot.controlEnabled;
       if (simCanvas) simCanvas.style.display = robot.controlEnabled ? 'block' : 'none';
+      console.log("Robot Control:", robot.controlEnabled ? "ON" : "OFF");
     }
   });
 
