@@ -2,7 +2,7 @@
   'use strict';
 
   var SIM_SIZE = 400;
-  // ⚠️ 自分のHugging Face SpaceのURL
+  // あなたのHugging Face Space URL
   const API_URL = "https://kgninja-functiongemmabotdemo-docker.hf.space/decide";
 
   var robot = {
@@ -20,8 +20,8 @@
     simCanvas.width = SIM_SIZE; simCanvas.height = SIM_SIZE;
     simCanvas.style.position = 'fixed';
     simCanvas.style.bottom = '10px'; simCanvas.style.right = '10px';
-    simCanvas.style.border = '2px solid #0f0';
-    simCanvas.style.background = 'rgba(0,10,0,0.8)';
+    simCanvas.style.border = '3px solid #0f0';
+    simCanvas.style.background = 'rgba(0,10,0,0.85)';
     simCanvas.style.zIndex = '1000';
     document.body.appendChild(simCanvas);
     simCtx = simCanvas.getContext('2d');
@@ -31,8 +31,7 @@
     if (robot.isThinking || !robot.controlEnabled) return;
     robot.isThinking = true;
 
-    // --- 【重要修正】AIの判定基準（50）に合わせるため数値をスケーリング ---
-    // window.state.lastObstacleScore が 0.57 の場合、57 として送る
+    // AIのしきい値(50)に合わせるためスケーリング
     const rawScore = window.state?.lastObstacleScore || 1.0;
     const scaledDistance = Math.round(Number(rawScore) * 100);
 
@@ -41,8 +40,6 @@
       speed: Number(robot.vLin || 0),
       ml_results: []
     };
-
-    console.log("🚀 Sending to Gemma:", payload);
 
     try {
       const res = await fetch(API_URL, {
@@ -53,29 +50,22 @@
 
       const json = await res.json();
       const rawText = json.data[0];
-      console.log("🤖 AI raw output:", rawText);
+      console.log("🤖 AI Output:", rawText);
 
-      // JSONを安全に抽出してパース
       const match = rawText.match(/\{.*\}/s);
       if (match) {
         const data = JSON.parse(match[0]);
-        console.log("✅ Decided Action:", data.action);
-
-        // アクションを物理値に変換
-        // move_forward が含まれていれば前進、それ以外（turn_left, stop等）は旋回
+        
+        // 判断を物理挙動に変換
         if (data.action && data.action.includes("forward")) {
-          robot.vLin = 0.7; // 少し速度アップ
-          robot.vAng = 0;
+          robot.vLin = 0.8; robot.vAng = 0; // 前進
         } else {
-          // 障害物回避：その場で回転
-          robot.vLin = 0.1;
-          robot.vAng = 1.5; 
+          robot.vLin = 0.1; robot.vAng = 1.8; // 旋回回避
         }
       }
     } catch (e) {
-      console.warn("⚠️ Gemma Decision Error:", e);
-      // 通信エラー時の安全策
-      robot.vLin = 0.2; robot.vAng = 0.8;
+      console.warn("⚠️ API Error:", e);
+      robot.vLin = 0.2; robot.vAng = 0.5; // エラー時安全旋回
     } finally {
       robot.isThinking = false;
     }
@@ -85,56 +75,45 @@
     if (!robot.controlEnabled) return;
     ensureCanvas();
 
-    // 1.2秒おきにAIに問い合わせ（少しレスポンスを速める）
+    // 1.2秒おきにAIに問い合わせ
     if (now - robot.lastDecisionAt > 1200) {
       askGemmaDecision();
       robot.lastDecisionAt = now;
     }
 
-    // 物理演算（移動係数を100に強化して動きを分かりやすく）
+    // 物理シミュレーション
     var dt = 0.1;
     robot.theta += robot.vAng * dt;
     robot.x += Math.cos(robot.theta) * robot.vLin * dt * 100;
     robot.y += Math.sin(robot.theta) * robot.vLin * dt * 100;
 
-    // 画面端のループ処理
+    // 画面端ループ
     if (robot.x < 0) robot.x = SIM_SIZE; if (robot.x > SIM_SIZE) robot.x = 0;
     if (robot.y < 0) robot.y = SIM_SIZE; if (robot.y > SIM_SIZE) robot.y = 0;
 
-    // 描画更新
+    // 描画
     simCtx.clearRect(0, 0, SIM_SIZE, SIM_SIZE);
     
-    // 背景にグリッド（任意：移動感を確認しやすくするため）
-    simCtx.strokeStyle = 'rgba(0, 255, 0, 0.1)';
-    for(let i=0; i<SIM_SIZE; i+=50){
-      simCtx.beginPath(); simCtx.moveTo(i,0); simCtx.lineTo(i,SIM_SIZE); simCtx.stroke();
-      simCtx.beginPath(); simCtx.moveTo(0,i); simCtx.lineTo(SIM_SIZE,i); simCtx.stroke();
-    }
-
+    // ロボット
     simCtx.save();
     simCtx.translate(robot.x, robot.y);
     simCtx.rotate(robot.theta);
     simCtx.strokeStyle = '#0f0';
     simCtx.lineWidth = 3;
-    simCtx.strokeRect(-10, -10, 20, 20); // 少し大きく
+    simCtx.strokeRect(-12, -12, 24, 24);
     simCtx.beginPath();
-    simCtx.moveTo(0, 0); simCtx.lineTo(15, 0); // 前方へのガイドライン
+    simCtx.moveTo(0,0); simCtx.lineTo(18,0); // 前方マーク
     simCtx.stroke();
     simCtx.restore();
   }
 
-  // キーボードイベント登録
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyR') {
       robot.controlEnabled = !robot.controlEnabled;
-      if (simCanvas) {
-        simCanvas.style.display = robot.controlEnabled ? 'block' : 'none';
-      }
-      console.log("🤖 Autonomous Mode:", robot.controlEnabled ? "ON" : "OFF");
+      if (simCanvas) simCanvas.style.display = robot.controlEnabled ? 'block' : 'none';
+      console.log("🤖 AI Mode:", robot.controlEnabled ? "ON" : "OFF");
     }
   });
 
-  // メインループから呼ばれるようにグローバル登録
   window.updateRobotControl = updateRobotControl;
-
 })();
