@@ -90,25 +90,46 @@
 
   function emergencyStop() { sendRobotCommand(0, 0); }
 
-  function autoControlStep() {
-    var sem = window.semantic || {};
-    var st = window.state || {};
-    var obstacleRatio = 0;
-    if (sem.stats && sem.stats.total > 0) {
-      obstacleRatio = sem.stats.obstacle / Math.max(1, sem.stats.total);
-    } else if (st.mlLastBox && st.procW && st.procH) {
-      var area = st.mlLastBox.w * st.mlLastBox.h;
-      obstacleRatio = area / Math.max(1, st.procW * st.procH);
-    }
+ async function autoControlStep() {
+  const now = performance.now();
+  if (now - lastDecisionAt < DECISION_INTERVAL) return;
+  lastDecisionAt = now;
 
-    if (obstacleRatio >= 0.30) {
-      sendRobotCommand(0, 0);
-    } else if (obstacleRatio >= 0.15) {
-      sendRobotCommand(0.15, 0.4 * Math.sign((window.hazard && window.hazard.bestSteer) || 0));
-    } else {
-      sendRobotCommand(0.35, 0.2 * ((window.hazard && window.hazard.bestSteer) || 0));
-    }
+  let obstacleRatio = 0;
+  const sem = window.semantic || {};
+  if (sem.stats && sem.stats.total > 0) {
+    obstacleRatio = sem.stats.obstacle / Math.max(1, sem.stats.total);
   }
+
+  try {
+    const res = await fetch(DECISION_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        front_distance: 1.0 - obstacleRatio,
+        speed: robot.vLin
+      })
+    });
+
+    const d = await res.json();
+
+    switch (d.action) {
+      case "move_forward":
+        sendRobotCommand(d.speed ?? 0.3, 0);
+        break;
+      case "turn_left":
+        sendRobotCommand(0.2, 0.6);
+        break;
+      case "turn_right":
+        sendRobotCommand(0.2, -0.6);
+        break;
+      default:
+        sendRobotCommand(0, 0);
+    }
+  } catch {
+    sendRobotCommand(0, 0);
+  }
+}
 
   function handleManualKeys() {
     var lin = 0, ang = 0;
