@@ -266,7 +266,6 @@ let lastVideoW = 0;
 let lastVideoH = 0;
 
 function cleanupMatrices() {
-  if (srcRGBA) { srcRGBA.delete(); srcRGBA = null; }
   if (procRGBA) { procRGBA.delete(); procRGBA = null; }
   if (gray) { gray.delete(); gray = null; }
   if (blur) { blur.delete(); blur = null; }
@@ -284,14 +283,8 @@ function initOpenCV() {
 
   try {
     // 古いMatをクリーンアップ
-    if (cap) {
-      cap.delete();
-      cap = null;
-    }
     cleanupMatrices();
 
-    // 新しいCapture作成
-    cap = new cv.VideoCapture(video);
     lastVideoW = video.videoWidth;
     lastVideoH = video.videoHeight;
     state.videoW = video.videoWidth;
@@ -304,49 +297,81 @@ function initOpenCV() {
     cvCanvas.width = state.procW;
     cvCanvas.height = state.procH;
 
-    // 新しいMatを作成
-    srcRGBA = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC4);
+    // 処理用Matだけを作成（VideoCapture.read()は使わない）
     procRGBA = new cv.Mat(state.procH, state.procW, cv.CV_8UC4);
-    gray = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-    blur = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
-    edges = new cv.Mat(state.procH, state.procW, cv.CV_8UC1);
+    gray = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
+    blur = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
+    edges = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
     
     if (!blurKSize) blurKSize = new cv.Size(5, 5);
     if (!dilateKernel) dilateKernel = cv.Mat.ones(3, 3, cv.CV_8U);
 
     state.cvReady = true;
-    updateStatus('camera-status', `OpenCV Ready (${state.videoW}x${state.videoH})`, 'good');
+    updateStatus('camera-status', `Ready (${state.videoW}x${state.videoH})`, 'good');
     console.log('OpenCV initialized:', state.videoW, 'x', state.videoH);
   } catch (e) {
     console.error('OpenCV init error:', e);
     state.cvReady = false;
-    updateStatus('camera-status', 'OpenCV Error: ' + e.message, 'bad');
+    updateStatus('camera-status', 'Error: ' + e.message, 'bad');
   }
 }
 
-/* ==================== CV処理 ==================== */
+/* ==================== CV処理（Canvas経由） ==================== */
+const captureCanvas = document.createElement('canvas');
+let captureCtx = null;
+
 function runCvOnce() {
   if (!state.cvReady || state.frozen) return;
   if (video.readyState !== 4) return; // HAVE_ENOUGH_DATA
 
   try {
-    cap.read(srcRGBA);
-    cv.resize(srcRGBA, procRGBA, new cv.Size(state.procW, state.procH), 0, 0, cv.INTER_AREA);
-    cv.cvtColor(procRGBA, gray, cv.COLOR_RGBA2GRAY);
+    // ビデオサイズ変更をチェック
+    if (video.videoWidth !== lastVideoW || video.videoHeight !== lastVideoH) {
+      console.log('Video size changed, reinitializing OpenCV');
+      state.cvReady = false;
+      initOpenCV();
+      return;
+    }
+
+    if (!procRGBA) return;
+
+    // Canvas経由でビデオをキャプチャ（VideoCapture.read()より安全）
+    captureCanvas.width = video.videoWidth;
+    captureCanvas.height = video.videoHeight;
+    
+    if (!captureCtx) {
+      captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
+    }
+
+    captureCtx.drawImage(video, 0, 0);
+    const imageData = captureCtx.getImageData(0, 0, video.videoWidth, video.videoHeight);
+
+    // ImageDataをOpenCV Matに変換
+    let src = cv.matFromImageData(imageData);
+    
+    // RGB→グレースケール
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
     cv.GaussianBlur(gray, blur, blurKSize, 1.1, 1.1, cv.BORDER_DEFAULT);
     cv.equalizeHist(blur, gray);
     cv.Canny(gray, edges, 35, 95);
     cv.dilate(edges, edges, dilateKernel);
 
+    // リサイズして表示用に
+    cv.resize(edges, procRGBA, new cv.Size(state.procW, state.procH), 0, 0, cv.INTER_AREA);
+
     if (state.debugEdges) {
-      cv.imshow(cvCanvas, edges);
+      cv.imshow(cvCanvas, procRGBA);
       drawMlOverlay();
     }
 
     const nz = cv.countNonZero(edges);
-    updateStatus('edge-status', `${nz} pixels`, nz > 0 ? 'good' : 'warn');
+    updateStatus('edge-status', `${nz} pixels`, nz > 100 ? 'good' : 'warn');
+
+    src.delete();
   } catch (e) {
     console.error('CV error:', e);
+    state.cvReady = false;
+    updateStatus('edge-status', 'Error: ' + e.message.substring(0, 40), 'bad');
   }
 }
 
@@ -644,14 +669,20 @@ window.addEventListener('keyup', (ev) => {
 let lastCvAt = 0;
 let fpsFrames = 0;
 let fpsAccMs = 0;
+let initAttempts = 0;
 
 function animate() {
   requestAnimationFrame(animate);
 
   const nowMs = performance.now();
 
-  if (!state.cvReady) {
-    initOpenCV();
+  // OpenCV初期化を繰り返し試行
+  if (!state.cvReady && video.videoWidth > 0) {
+    initAttempts++;
+    if (initAttempts % 10 === 0) { // 10フレームごとに試行
+      console.log('Attempting OpenCV init, video:', video.videoWidth, 'x', video.videoHeight);
+      initOpenCV();
+    }
   }
 
   if (nowMs - lastCvAt > 90) {
@@ -680,11 +711,13 @@ function animate() {
 // OpenCV初期化完了後にスタート
 cv['onRuntimeInitialized'] = async () => {
   try {
+    console.log('OpenCV runtime initialized');
     await initCamera();
+    console.log('Camera initialized, video:', video.videoWidth, 'x', video.videoHeight);
     animate();
   } catch (e) {
     console.error('Startup error:', e);
-    updateStatus('camera-status', 'Camera unavailable', 'bad');
+    updateStatus('camera-status', 'Camera unavailable: ' + e.message, 'bad');
   }
 };
 </script>
