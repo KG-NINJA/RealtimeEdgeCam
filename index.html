@@ -1,251 +1,144 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8" />
-<title>Gemma Decision Control Demo</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="UTF-8">
+<title>Artificial Structure Wireframe (A-1) with Gemma</title>
 <style>
-  body {
-    margin: 0;
-    background: #0b0e14;
-    color: #cfd8ff;
-    font-family: monospace;
-  }
-  #hud {
-    position: fixed;
-    left: 10px;
-    top: 10px;
-    background: rgba(0,0,0,0.7);
-    padding: 10px;
-    border: 1px solid #345;
-    width: 360px;
-  }
-  #log {
-    white-space: pre-wrap;
-    font-size: 12px;
-    max-height: 240px;
-    overflow-y: auto;
-    margin-top: 6px;
-    color: #9ff;
-  }
-  canvas {
-    display: block;
-    margin: 80px auto 0;
-    background: #05070c;
-    border: 1px solid #234;
-  }
+body { margin:0; background:#000; overflow:hidden; }
+#ui {
+  position:fixed;
+  top:10px; left:10px;
+  color:#0f0;
+  font-family:monospace;
+  font-size:12px;
+  background:rgba(0,0,0,0.6);
+  padding:10px;
+  z-index: 100;
+  border: 1px solid #0f0;
+}
+/* 日本語コメント: ロボットログ表示用 */
+#gemma-log {
+  color: #9ff;
+  margin-top: 8px;
+  font-size: 11px;
+  max-height: 120px;
+  overflow-y: auto;
+  border-top: 1px solid #345;
+  padding-top: 5px;
+}
+video { position: fixed; left: -10000px; }
+canvas {
+  position: absolute; top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
 </style>
 </head>
 <body>
 
-<div id="hud">
-  <div><b>Gemma Robot Decision Demo</b></div>
-  <div>G: Ask Gemma / R: Control ON-OFF / X: STOP</div>
-  <div id="state"></div>
-  <div id="log"></div>
+<div id="ui">
+  <b>A-1 Mapper + FunctionGemma</b><br>
+  [M] ML: <span id="ml-stat">OFF</span> | [S] Semantic | [B] Box<br>
+  [G] Ask Gemma (Decision) | [R] Robot Sim<br>
+  <div id="ml-info">Object: None</div>
+  <div id="gemma-log">System Ready. Press [G] to analyze.</div>
 </div>
 
-<canvas id="sim" width="400" height="400"></canvas>
+<video id="v" autoplay playsinline muted></video>
+<canvas id="c"></canvas>
 
-<script>
-/* =====================
-   設定
-===================== */
-const GEMMA_DECISION_API =
-  "https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide";
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-const MAX_LINEAR = 0.5;
-const MAX_ANGULAR = 1.0;
-const DT_MS = 100;
-const SIM_SIZE = 400;
+<script type="module">
+// Hugging Face APIクライアントの読み込み
+import { Client } from "https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js";
 
-/* =====================
-   状態
-===================== */
-const robot = {
-  controlEnabled: true,
-  x: SIM_SIZE / 2,
-  y: SIM_SIZE / 2,
-  theta: 0,
-  vLin: 0,
-  vAng: 0,
-  obstacleScore: 0.0,
-  trail: []
+// --- A-1 Mapper 既存のロジックをモジュール内で再構成 ---
+// (ここに元の index.html の定数と変数を統合)
+const video = document.getElementById('v');
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const ui_ml = document.getElementById('ml-info');
+
+const state = {
+  mlEnabled: false,
+  mlReady: false,
+  mlLastClass: '',
+  mlLastScore: 0,
+  isThinking: false
 };
 
-const canvas = document.getElementById("sim");
-const ctx = canvas.getContext("2d");
-const logEl = document.getElementById("log");
-const stateEl = document.getElementById("state");
-
-/* =====================
-   Utility
-===================== */
-function clamp(v, lo, hi) {
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function log(msg, obj) {
-  const line = obj
-    ? msg + "\n" + JSON.stringify(obj, null, 2)
-    : msg;
-  console.log(line);
-  logEl.textContent = line;
-}
-
-/* =====================
-   観測生成（Gemmaへ送る）
-===================== */
-function buildObservationForGemma() {
-  return {
-    obstacle_score: robot.obstacleScore,
-    has_obstacle: robot.obstacleScore > 0.5,
-    speed: robot.vLin
-  };
-}
-
-/* =====================
-   Gemma 呼び出し（Gキー）
-===================== */
-async function askGemmaDecision() {
-  const obs = buildObservationForGemma();
-  log("SEND TO GEMMA", obs);
+// --- FunctionGemma 接続ロジック ---
+async function askGemma() {
+  if (state.isThinking) return;
+  state.isThinking = true;
+  updateLog("Gemma: 思考中...");
 
   try {
-    const res = await fetch(GEMMA_DECISION_API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(obs)
-    });
+    // ユーザーのSpace URLに合わせて変更してください
+    const app = await Client.connect("KGNINJA/FunctionGemmabotdemo-docker");
+    
+    // 現在の観測結果をプロンプト化
+    const observation = state.mlLastClass 
+      ? `視界に ${state.mlLastClass} を検知しました (確信度: ${Math.round(state.mlLastScore*100)}%)。行動を決定してください。`
+      : "視界に障害物はありません。探索を継続しますか？";
 
-    const decision = await res.json();
-    log("GEMMA RESPONSE", decision);
-    applyGemmaDecision(decision);
+    const result = await app.predict("/predict", { message: observation });
+    const response = result.data[0];
 
-  } catch (e) {
-    log("API ERROR: " + e.message);
+    updateLog(`Gemma: ${response}`);
+  } catch (err) {
+    updateLog("Error: Gemma通信失敗");
+    console.error(err);
+  } finally {
+    state.isThinking = false;
   }
 }
 
-/* =====================
-   Gemma Decision → 行動
-===================== */
-function applyGemmaDecision(d) {
-  if (!d || !d.action) return;
+function updateLog(msg) {
+  const log = document.getElementById('gemma-log');
+  log.innerHTML = `<div>${msg}</div>` + log.innerHTML;
+}
 
-  switch (d.action) {
-    case "move_forward":
-      sendRobotCommand(0.3, 0);
-      break;
-    case "turn_left":
-      sendRobotCommand(0.2, 0.6);
-      break;
-    case "turn_right":
-      sendRobotCommand(0.2, -0.6);
-      break;
-    case "stop":
-    default:
-      emergencyStop();
+// --- キーイベントの統合 ---
+window.addEventListener('keydown', (ev) => {
+  if (ev.code === 'KeyM') {
+    state.mlEnabled = !state.mlEnabled;
+    document.getElementById('ml-stat').innerText = state.mlEnabled ? "ON" : "OFF";
   }
-}
-
-/* =====================
-   ロボット制御
-===================== */
-function sendRobotCommand(lin, ang) {
-  robot.vLin = clamp(lin, -MAX_LINEAR, MAX_LINEAR);
-  robot.vAng = clamp(ang, -MAX_ANGULAR, MAX_ANGULAR);
-}
-
-function emergencyStop() {
-  sendRobotCommand(0, 0);
-}
-
-/* =====================
-   入力
-===================== */
-window.addEventListener("keydown", (ev) => {
-  if (ev.code === "KeyG") askGemmaDecision();
-  if (ev.code === "KeyR") robot.controlEnabled = !robot.controlEnabled;
-  if (ev.code === "KeyX") emergencyStop();
+  // GキーでGemmaに相談
+  if (ev.code === 'KeyG') {
+    askGemma();
+  }
 });
 
-/* =====================
-   シミュレーション更新
-===================== */
-let lastUpdate = 0;
+// --- 描画ループと robot-control.js の連携 ---
+// 別ファイルの robot-control.js を読み込み
+import "./robot-control.js"; 
 
-function update(now) {
-  requestAnimationFrame(update);
-  if (!robot.controlEnabled) return;
-  if (now - lastUpdate < DT_MS) return;
-  lastUpdate = now;
-
-  // 仮の障害物スコア（前方に行くほど増える想定）
-  robot.obstacleScore = clamp(robot.y / SIM_SIZE, 0, 1);
-
-  const dt = DT_MS / 1000;
-  robot.theta += robot.vAng * dt;
-  robot.x += Math.cos(robot.theta) * robot.vLin * dt * 80;
-  robot.y += Math.sin(robot.theta) * robot.vLin * dt * 80;
-  robot.x = clamp(robot.x, 10, SIM_SIZE - 10);
-  robot.y = clamp(robot.y, 10, SIM_SIZE - 10);
-
-  robot.trail.push({ x: robot.x, y: robot.y });
-  if (robot.trail.length > 300) robot.trail.shift();
-
-  draw();
-}
-
-/* =====================
-   描画
-===================== */
-function draw() {
-  ctx.clearRect(0, 0, SIM_SIZE, SIM_SIZE);
-
-  // grid
-  ctx.strokeStyle = "#123";
-  for (let i = 0; i <= SIM_SIZE; i += 40) {
-    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, SIM_SIZE); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(SIM_SIZE, i); ctx.stroke();
+function loop(now) {
+  // 元の A-1 描画ロジック (簡略化)
+  if (state.mlEnabled && state.mlReady) {
+    // COCO-SSD 推論と結果表示の更新
+    ui_ml.innerText = `Object: ${state.mlLastClass || 'None'}`;
   }
 
-  // trail
-  if (robot.trail.length > 1) {
-    ctx.strokeStyle = "#0ff";
-    ctx.beginPath();
-    robot.trail.forEach((p, i) => {
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    });
-    ctx.stroke();
+  // ロボットシミュレーターの更新関数を呼び出し
+  if (window.updateRobotControl) {
+    window.updateRobotControl(now);
   }
-
-  // robot
-  ctx.save();
-  ctx.translate(robot.x, robot.y);
-  ctx.rotate(robot.theta);
-  ctx.fillStyle = "#0f0";
-  ctx.beginPath();
-  ctx.moveTo(12, 0);
-  ctx.lineTo(-12, -8);
-  ctx.lineTo(-12, 8);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-
-  stateEl.textContent =
-    `ctrl=${robot.controlEnabled ? "ON" : "OFF"} ` +
-    `v=${robot.vLin.toFixed(2)} ` +
-    `w=${robot.vAng.toFixed(2)} ` +
-    `obstacle=${robot.obstacleScore.toFixed(2)}`;
+  
+  requestAnimationFrame(loop);
 }
 
-/* =====================
-   起動
-===================== */
-requestAnimationFrame(update);
+// カメラ起動とループ開始
+navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}).then(s=>{
+  video.srcObject = s;
+  requestAnimationFrame(loop);
+});
+
 </script>
-
 </body>
 </html>
