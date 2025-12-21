@@ -2,107 +2,120 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<title>Robot Decision Demo (G-key)</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Robot Decision Demo (Camera → HF)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
   body {
     margin: 0;
-    background: #0b0e14;
-    color: #cfd8ff;
+    background: #000;
+    color: #0ff;
     font-family: monospace;
   }
-  #hud {
+  #video {
+    position: fixed;
+    right: 10px;
+    bottom: 10px;
+    width: 240px;
+    border: 1px solid #345;
+    opacity: 0.9;
+  }
+  #overlay {
     position: fixed;
     left: 10px;
     top: 10px;
     background: rgba(0,0,0,0.6);
-    padding: 10px;
-    border: 1px solid #345;
-    width: 340px;
+    padding: 8px;
+    border: 1px solid #0af;
   }
   #log {
     white-space: pre-wrap;
     font-size: 12px;
-    max-height: 200px;
-    overflow-y: auto;
-    margin-top: 6px;
-    color: #9ff;
   }
 </style>
 </head>
+
 <body>
 
-<div id="hud">
-  <div><b>Robot Decision Demo</b></div>
-  <div>R: Control | O: Auto | G: Ask Gemma | X: STOP</div>
-  <div id="state"></div>
+<div id="overlay">
+  <div>Robot Decision Demo</div>
+  <div>G: Ask Gemma</div>
   <div id="log"></div>
 </div>
 
-<canvas id="sim" width="400" height="400"></canvas>
+<video id="video" autoplay playsinline muted></video>
+<canvas id="grab" width="160" height="120" style="display:none;"></canvas>
 
 <script>
-/* =====================
+/* =========================
    設定
-===================== */
+========================= */
 const DECISION_API =
   "https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide";
 
-const MAX_LINEAR = 0.5;
-const MAX_ANGULAR = 1.0;
-const DT_MS = 100;
-const SIM_SIZE = 400;
-
-/* =====================
-   状態
-===================== */
-const robot = {
-  controlEnabled: false,
-  autoMode: true,
-  x: SIM_SIZE/2,
-  y: SIM_SIZE/2,
-  theta: 0,
-  vLin: 0,
-  vAng: 0,
-  trail: []
-};
-
-const keys = {};
-const canvas = document.getElementById("sim");
-const ctx = canvas.getContext("2d");
+/* =========================
+   要素取得
+========================= */
+const video = document.getElementById("video");
+const grab = document.getElementById("grab");
+const gctx = grab.getContext("2d");
 const logEl = document.getElementById("log");
-const stateEl = document.getElementById("state");
 
-/* =====================
-   Utility
-===================== */
-function clamp(v, lo, hi) {
-  return Math.max(lo, Math.min(hi, v));
-}
-
+/* =========================
+   ログ表示
+========================= */
 function log(msg, obj) {
-  const line = obj
-    ? msg + "\n" + JSON.stringify(obj, null, 2)
-    : msg;
-  console.log(line);
-  logEl.textContent = line;
+  logEl.textContent =
+    msg + (obj ? "\n" + JSON.stringify(obj, null, 2) : "");
 }
 
-/* =====================
-   観測生成（Zenn思想の核）
-===================== */
+/* =========================
+   カメラ起動（ユーザー操作後）
+========================= */
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "environment" },
+    audio: false
+  });
+  video.srcObject = stream;
+  await video.play();
+  log("Camera started");
+}
+
+document.body.addEventListener("click", startCamera, { once: true });
+
+/* =========================
+   映像 → 数値化（最小）
+   中央輝度 = front_distance
+========================= */
+function computeFrontDistance() {
+  gctx.drawImage(video, 0, 0, grab.width, grab.height);
+
+  const cx = grab.width / 2 - 5;
+  const cy = grab.height / 2 - 5;
+  const img = gctx.getImageData(cx, cy, 10, 10);
+
+  let sum = 0;
+  for (let i = 0; i < img.data.length; i += 4) {
+    sum += img.data[i]; // R値
+  }
+  const avg = sum / (img.data.length / 4);
+  return avg / 255; // 0.0〜1.0
+}
+
+/* =========================
+   観測データ構築
+========================= */
 function buildObservation() {
   return {
-    front_distance: 1.0,        // 仮：前方クリア
-    speed: robot.vLin           // 現在速度
+    front_distance: computeFrontDistance(),
+    speed: 0.0
   };
 }
 
-
-/* =====================
-   Gemma 呼び出し（Gキー）
-===================== */
-async function askGemmaDecision() {
+/* =========================
+   Gemma に判断させる
+========================= */
+async function askGemma() {
   const obs = buildObservation();
   log("SEND TO GEMMA", obs);
 
@@ -115,156 +128,19 @@ async function askGemmaDecision() {
 
     const decision = await res.json();
     log("GEMMA RESPONSE", decision);
-    applyDecision(decision);
-
   } catch (e) {
-    log("API ERROR: " + e.message);
+    log("ERROR", String(e));
   }
 }
 
-/* =====================
-   Decision → 行動
-===================== */
-function applyDecision(d) {
-  if (!d || !d.action) return;
-
-  switch (d.action) {
-    case "move_forward":
-      sendRobotCommand(0.3, 0);
-      break;
-    case "turn_left":
-      sendRobotCommand(0.2, 0.6);
-      break;
-    case "turn_right":
-      sendRobotCommand(0.2, -0.6);
-      break;
-    case "stop":
-    default:
-      emergencyStop();
-  }
-}
-
-/* =====================
-   ロボット制御
-===================== */
-function sendRobotCommand(lin, ang) {
-  robot.vLin = clamp(lin, -MAX_LINEAR, MAX_LINEAR);
-  robot.vAng = clamp(ang, -MAX_ANGULAR, MAX_ANGULAR);
-}
-
-function emergencyStop() {
-  sendRobotCommand(0, 0);
-}
-
-/* =====================
-   入力
-===================== */
-window.addEventListener("keydown", (ev) => {
-  keys[ev.code] = true;
-
-  if (ev.code === "KeyR") {
-    robot.controlEnabled = !robot.controlEnabled;
-  }
-  if (ev.code === "KeyO") {
-    robot.autoMode = !robot.autoMode;
-  }
-  if (ev.code === "KeyX") {
-    emergencyStop();
-  }
-  if (ev.code === "KeyG") {
-    askGemmaDecision();
+/* =========================
+   Gキーで送信
+========================= */
+window.addEventListener("keydown", (e) => {
+  if (e.code === "KeyG") {
+    askGemma();
   }
 });
-
-window.addEventListener("keyup", (ev) => {
-  keys[ev.code] = false;
-});
-
-/* =====================
-   手動操作
-===================== */
-function handleManualKeys() {
-  let lin = 0, ang = 0;
-  if (keys.KeyW || keys.ArrowUp) lin += 1;
-  if (keys.KeyS || keys.ArrowDown) lin -= 1;
-  if (keys.KeyA || keys.ArrowLeft) ang += 1;
-  if (keys.KeyD || keys.ArrowRight) ang -= 1;
-  sendRobotCommand(lin * MAX_LINEAR, ang * MAX_ANGULAR);
-}
-
-/* =====================
-   シミュレーター更新
-===================== */
-let lastUpdate = 0;
-
-function update(now) {
-  requestAnimationFrame(update);
-  if (!robot.controlEnabled) return;
-  if (now - lastUpdate < DT_MS) return;
-  lastUpdate = now;
-
-  if (!robot.autoMode) handleManualKeys();
-
-  const dt = DT_MS / 1000;
-  robot.theta += robot.vAng * dt;
-  robot.x += Math.cos(robot.theta) * robot.vLin * dt * 80;
-  robot.y += Math.sin(robot.theta) * robot.vLin * dt * 80;
-  robot.x = clamp(robot.x, 10, SIM_SIZE-10);
-  robot.y = clamp(robot.y, 10, SIM_SIZE-10);
-
-  robot.trail.push({x: robot.x, y: robot.y});
-  if (robot.trail.length > 300) robot.trail.shift();
-
-  draw();
-}
-
-/* =====================
-   描画
-===================== */
-function draw() {
-  ctx.clearRect(0,0,SIM_SIZE,SIM_SIZE);
-
-  // grid
-  ctx.strokeStyle = "#123";
-  for (let i=0;i<=SIM_SIZE;i+=40){
-    ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,SIM_SIZE); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(SIM_SIZE,i); ctx.stroke();
-  }
-
-  // trail
-  if (robot.trail.length>1){
-    ctx.strokeStyle="#0ff";
-    ctx.beginPath();
-    robot.trail.forEach((p,i)=>{
-      if(i===0) ctx.moveTo(p.x,p.y);
-      else ctx.lineTo(p.x,p.y);
-    });
-    ctx.stroke();
-  }
-
-  // robot
-  ctx.save();
-  ctx.translate(robot.x, robot.y);
-  ctx.rotate(robot.theta);
-  ctx.fillStyle = robot.controlEnabled ? "#0f0" : "#555";
-  ctx.beginPath();
-  ctx.moveTo(12,0);
-  ctx.lineTo(-12,-8);
-  ctx.lineTo(-12,8);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-
-  stateEl.textContent =
-    `mode=${robot.autoMode?"AUTO":"MANUAL"} ` +
-    `ctrl=${robot.controlEnabled?"ON":"OFF"} ` +
-    `v=${robot.vLin.toFixed(2)} w=${robot.vAng.toFixed(2)}`;
-}
-
-/* =====================
-   起動
-===================== */
-requestAnimationFrame(update);
 </script>
 
 </body>
