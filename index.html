@@ -211,7 +211,7 @@ const state = {
   
   gemmaLastDecision: '',
   gemmaNextAtMs: 0,
-  gemmaIntervalMs: 5000,  // 5秒間隔に延長（API呼び出しを減らす）
+  gemmaIntervalMs: 30000,  // 30秒間隔（1フレーム/30秒、十分少ない）
 };
 
 const ML_ALLOWED = new Set([
@@ -705,7 +705,9 @@ function animate() {
   }
 
   runCocoOnce(nowMs);
-  askGemmaDecision(nowMs);
+  
+  // 🔴 自動 Gemma 呼び出しを無効化（手動 G キーのみ）
+  // askGemmaDecision(nowMs);
 
   if (state.robotEnabled) {
     updateRobotSim(0.1);
