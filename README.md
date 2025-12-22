@@ -1,37 +1,225 @@
-# 3Dcap Robot Vision Add-ons
+# A-1 Robot Vision - AI Powered Robot Control System
 
-## 概要
-エッジ検出 + COCO-SSDベースの障害物検知に、以下を追加しました。
-- 音声挨拶: Web Speech API で人・動物検出時に自動挨拶（HでON/OFF、Tでテスト）
-- ロボット制御: 差動駆動の抽象レイヤーとCanvasシミュレーター（RでON/OFF、OでAUTO/MAN、WASD/矢印で手動、Xで即停止）
-- Gemini Nano（Prompt API）初期化（Gで起動）
+高度なコンピュータビジョンとAI推論を備えた、リアルタイムロボット制御システムです。WebカメラからのビデオフィードをOpenCVで処理し、TensorFlow.js + Gemmaモデルを使用して自律的な運動判定を行います。
 
-## ファイル
-- `index.html` : 入口。新規JSを読み込み、UI/ML設定を更新。
-- `speech-greeting.js` : 挨拶機能。10秒履歴＋3秒クールダウンで重複抑制。
-- `robot-control.js` : 制御レイヤーと右下400x400pxのシミュレーター。AUTOは障害物率に応じた減速・停止。
-- `gemini-nano.js` : Prompt API(Gemini Nano)初期化ラッパー。
-- `semantic-map.js` : 既存のセマンティックマップ（無変更）。
+## 🚀 主な機能
 
-## 使い方
-1. ブラウザで `index.html` を開く（HTTPS/CDNにアクセスできる環境）。
-2. 必要なショートカットを押下:
-   - `M`: COCO-SSDロード/ON（人・動物検出で挨拶発火）
-   - `H`: 音声ON/OFF、`T`: 挨拶テスト
-   - `R`: ロボット制御ON/OFF、`O`: AUTO/MAN、`WASD/↑↓←→`: 手動走行、`X`: 緊急停止
-   - `G`: Gemini Nano初期化
-3. UI表示をONにするには `U` を押す（デフォルト非表示）。状態欄に speech/robot が出ます。
+### ビジョンシステム
+- **リアルタイムエッジ検出**: OpenCV.jsを使用したCanny エッジ検出
+- **障害物検出**: TensorFlow.js COCO-SSD モデルによる物体認識
+- **ステアリング分析**: 9セクション危険度マップで進行方向を分析
+- **ライブカメラフィード**: WebRTC経由でWebカメラからの映像を取得
 
-## AUTO走行ロジック
-- セマンティックマップの障害物率 ≥30%: 停止
-- 15〜30%: 減速＋ステアリング回避
-- <15%: 前進（hazard.bestSteerを弱めに反映）
+### AI推論エンジン
+- **Gemmaモデル統合**: Google Gemmaを使用した意思決定AI
+- **距離ベースの判定**: 障害物距離に基づいた動作選択
+- **フォールバックロジック**: API失敗時の自動フォールバック
+- **スムーズな速度制御**: 目標速度への段階的加速/減速
 
-## 実機連携メモ
-- `robot-control.js` の `sendRobotCommand()` で抽象化。ここに WebSocket/シリアル等を書き足せば実機へ送信可能。
-- 挨拶は `window.speak()` に文言を渡せば任意発話できます。
+### ロボットシミュレータ
+- **リアルタイム動作表示**: 2D仮想環境でのロボット運動シミュレーション
+- **状態管理**: 速度、角速度、位置の追跡と表示
+- **視覚フィードバック**: 障害物距離と動作状態を視覚化
 
-## 確認チェック
-- COCO-SSD有効時に person/dog/cat/bird/horse/cow/elephant/bear を検出すると挨拶する。
-- `R` でシミュレーターが右下に表示され、`WASD` で移動する。
-- UIの speech/robot 表示が状態に追従する。
+## 🎮 操作方法
+
+### キーボード操作（PC/タブレット）
+
+| キー | 機能 |
+|------|------|
+| **M** | AI認識の有効/無効切り替え |
+| **R** | ロボット動作の有効/無効切り替え |
+
+### タッチボタン（スマートフォン）
+
+| ボタン | 機能 |
+|--------|------|
+| 🧠 AI | AI認識システムの ON/OFF |
+| 🤖 動作 | ロボット動作の ON/OFF |
+| 📹 カメラ | カメラビューの切り替え |
+| ℹ️ 情報 | ステータス情報の表示/非表示 |
+
+## 📊 UI コンポーネント
+
+### ステータスパネル（左上）
+```
+⚙️ A-1 ROBOT VISION
+🎯 障害物距離    : 100
+🧠 Gemma思考      : 待機中
+🤖 ロボット状態  : 停止中
+📍 現在の指示     : -
+⚡ 速度          : 0.0
+🎯 ステアリング  : → 中立
+```
+
+### ステアリングゲージ（左中）
+- 9セクション危険度マップを表示
+- 白いバーで各セクションの障害物レベルを可視化
+- 緑色の指標線で推奨される安全な方向を表示
+- 左右の危険度をリアルタイムで更新
+
+### ロボットシミュレータ（右下）
+- 仮想環境でのロボット位置と向きを2D表示
+- グリッド背景で移動範囲を可視化
+- AI決定と距離メーター、速度・角速度表示
+- ロボット非稼働時は「STOPPED」表示
+
+### カメラフィード（背景）
+- リアルタイムのWebカメラ映像表示
+- OpenCV Cannyエッジ検出結果をオーバーレイ
+
+## 🔧 AI動作ロジック
+
+### 距離レベルに基づいた判定
+
+```
+距離 >= 60  : move_forward  (前進)
+30 <= 距離 < 60 : ランダム選択 (前進/左旋回/右旋回)
+距離 < 30   : 左または右に旋回 (回避)
+```
+
+### ロボット制御値
+
+| アクション | 直線速度(v_lin) | 角速度(v_ang) |
+|-----------|-----------------|---------------|
+| move_forward | 0.8 | 0.0 |
+| turn_left | 0.3 | -2.0 |
+| turn_right | 0.3 | 2.0 |
+| stop | 0.0 | 0.0 |
+
+## 📱 レスポンシブデザイン
+
+### PC/タブレット（768px以上）
+- ビデオフィード: フルスクリーン背景
+- UIパネル: 左上固定 (280px × 300px)
+- ステアリング: 左上、UIパネル下 (280px × 30px)
+- シミュレータ: 右下固定 (280px × 280px)
+- キー情報: 左下表示
+
+### スマートフォン（767px以下）
+- ビデオフィード: 上部 60%
+- UIパネル: 中央 (スクロール可)
+- ステアリング: 左上 (残りスペース)
+- シミュレータ: 右上 (動的サイズ調整)
+- タッチボタン: 下部バー (固定)
+
+## 🛠️ 技術スタック
+
+### フロントエンド
+- **HTML5**: セマンティックマークアップ
+- **CSS3**: レスポンシブデザイン、フレックスボックス
+- **JavaScript (Vanilla)**: 非同期処理、アニメーションループ
+
+### ビジョンライブラリ
+- **OpenCV.js 4.x**: エッジ検出、画像処理
+- **TensorFlow.js 4.22.0**: 機械学習推論
+- **COCO-SSD 2.2.3**: 物体検出モデル
+
+### API統合
+- **WebRTC**: Webカメラアクセス (`navigator.mediaDevices.getUserMedia`)
+- **Gemma API**: リモート推論エンドポイント
+  - エンドポイント: `https://kgninja-functiongemmabotdemo-docker.hf.space/decide`
+  - リクエスト周期: 2.5秒（Gemmaの思考時間）
+
+## 🎯 実行フロー
+
+```
+初期化
+  ↓
+OpenCV.js読み込み → cv.onRuntimeInitialized()
+  ↓
+Webカメラアクセス許可 → video stream取得
+  ↓
+メインループ開始 (requestAnimationFrame)
+  ├─ runCV(): エッジ検出処理
+  ├─ runML(): 物体検出（MLが有効な場合）
+  ├─ calculateSteering(): 危険度マップ更新
+  ├─ askGemma(): AI推論（ロボット稼働時）
+  ├─ animate(): ロボット動作更新
+  ├─ drawSimulator(): シミュレータ描画
+  └─ drawSteeringGauge(): ゲージ描画
+     ↓
+   (requestAnimationFrameで再帰)
+```
+
+## 📊 状態管理
+
+### state オブジェクト
+
+```javascript
+{
+  cvReady: boolean,           // OpenCV初期化完了
+  mlReady: boolean,           // ML モデル読み込み完了
+  mlEnabled: boolean,         // AI認識の有効状態
+  mlInFlight: boolean,        // API呼び出し中フラグ
+  lastObstacleScore: number,  // 最新の障害物スコア (0-100)
+  robotEnabled: boolean,      // ロボット動作の有効状態
+  
+  robotX: number,             // ロボット X 座標
+  robotY: number,             // ロボット Y 座標
+  robotTheta: number,         // ロボット方向角（ラジアン）
+  robotVLin: number,          // ロボット直線速度
+  robotVAng: number,          // ロボット角速度
+  targetVLin: number,         // 目標直線速度
+  targetVAng: number,         // 目標角速度
+  
+  gemmaLastAction: string,    // 最後のAI決定
+  gemmaNextAt: number,        // 次のAPI呼び出し時刻
+  gemmaThinking: boolean,     // API処理中フラグ
+  
+  steerValue: number,         // ステアリング値 (-1.0..+1.0)
+  steerNextAt: number         // 次のステアリング更新時刻
+}
+```
+
+## ⚙️ パフォーマンス
+
+### フレームレート
+- **ビデオ処理**: 60 FPS (requestAnimationFrame)
+- **ステアリング更新**: 200ms 周期（5Hz）
+- **AI推論**: 2.5秒 周期（0.4Hz）
+
+### メモリ管理
+- OpenCV Mat オブジェクトの適切な削除
+- キャッシュキャンバス再利用
+- UI再描画の最小化
+
+## 🐛 トラブルシューティング
+
+### カメラが起動しない
+1. ブラウザのカメラ許可を確認
+2. HTTPSまたはlocalhostで実行確認
+3. ファイアウォール設定を確認
+
+### AI モデルの読み込みエラー
+1. インターネット接続を確認
+2. CDN (cdn.jsdelivr.net) へのアクセス確認
+3. ブラウザコンソールのエラーメッセージを確認
+
+### フレームレート低下
+1. 解像度を下げる
+2. 他のアプリケーションを終了
+3. ブラウザのハードウェアアクセラレーション有効化
+
+## 🚀 今後の拡張予定
+
+- [ ] ROS統合（実ロボット接続）
+- [ ] DepthSense対応（奥行き情報取得）
+- [ ] セマンティックセグメンテーション
+- [ ] マップ作成・ナビゲーション
+- [ ] 複数ロボット協調制御
+- [ ] ジェスチャー認識インターフェース
+
+## 📝 ライセンス
+
+MIT License
+
+## 🤝 貢献
+
+バグ報告や機能提案は GitHub Issues にてお願いします。
+
+---
+
+**Version**: 1.0.0  
+**Updated**: December 2025  
+**Author**: A-1 Robotics Lab
