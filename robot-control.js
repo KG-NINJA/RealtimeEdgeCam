@@ -9,8 +9,10 @@
     x: SIM_SIZE / 2, y: SIM_SIZE / 2,
     theta: 0, vLin: 0, vAng: 0,
     lastDecisionAt: 0, isThinking: false,
-    lastActionText: "Waiting...", // 画面表示用
-    lastDistText: "0"             // 画面表示用
+    // --- 画面表示用の変数 ---
+    lastActionText: "STANDBY", 
+    lastDistText: "---",
+    statusColor: "#00FF00" 
   };
 
   var simCanvas = null, simCtx = null;
@@ -21,9 +23,9 @@
     simCanvas.width = SIM_SIZE; simCanvas.height = SIM_SIZE;
     simCanvas.style.position = 'fixed';
     simCanvas.style.bottom = '10px'; simCanvas.style.right = '10px';
-    simCanvas.style.border = '3px solid #0f0';
-    simCanvas.style.background = 'rgba(0,10,0,0.85)';
-    simCanvas.style.zIndex = '1000';
+    simCanvas.style.border = '2px solid #0f0';
+    simCanvas.style.background = 'rgba(0, 10, 0, 0.9)'; // 背景を濃くして文字を見やすく
+    simCanvas.style.zIndex = '10000'; // 最前面に
     document.body.appendChild(simCanvas);
     simCtx = simCanvas.getContext('2d');
   }
@@ -36,37 +38,37 @@
     const scaledDistance = Math.round(Number(rawScore) * 100);
     robot.lastDistText = scaledDistance;
 
-    const payload = {
-      front_distance: scaledDistance,
-      speed: Number(robot.vLin || 0),
-      ml_results: []
-    };
-
     try {
       const res = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          front_distance: scaledDistance,
+          speed: Number(robot.vLin || 0),
+          ml_results: []
+        })
       });
 
       const json = await res.json();
       const rawText = json.data[0];
-      
       const match = rawText.match(/\{.*\}/s);
+      
       if (match) {
         const data = JSON.parse(match[0]);
-        // 🤖 画面表示用のテキストを更新
+        // 🤖 判断結果を画面用に保存
         robot.lastActionText = data.action.toUpperCase();
-
-        if (data.action && data.action.includes("forward")) {
+        
+        if (data.action.includes("forward")) {
           robot.vLin = 0.8; robot.vAng = 0;
+          robot.statusColor = "#00FF00"; // 進める時は緑
         } else {
           robot.vLin = 0.1; robot.vAng = 1.8;
+          robot.statusColor = "#FF00FF"; // 回避中はマゼンタ（目立つ色）
         }
       }
     } catch (e) {
-      robot.lastActionText = "ERROR";
-      robot.vLin = 0.2; robot.vAng = 0.5;
+      robot.lastActionText = "API ERROR";
+      robot.statusColor = "#FF0000"; // エラーは赤
     } finally {
       robot.isThinking = false;
     }
@@ -81,6 +83,7 @@
       robot.lastDecisionAt = now;
     }
 
+    // 物理演算
     var dt = 0.1;
     robot.theta += robot.vAng * dt;
     robot.x += Math.cos(robot.theta) * robot.vLin * dt * 100;
@@ -89,28 +92,30 @@
     if (robot.x < 0) robot.x = SIM_SIZE; if (robot.x > SIM_SIZE) robot.x = 0;
     if (robot.y < 0) robot.y = SIM_SIZE; if (robot.y > SIM_SIZE) robot.y = 0;
 
-    // --- 描画処理 ---
+    // --- 描画開始 ---
     simCtx.clearRect(0, 0, SIM_SIZE, SIM_SIZE);
     
-    // 🤖 ステータス情報の表示（左上に表示）
-    simCtx.fillStyle = "#0f0";
-    simCtx.font = "bold 16px monospace";
-    simCtx.fillText(`DISTANCE: ${robot.lastDistText}`, 15, 25);
-    simCtx.fillText(`AI DECISION: ${robot.lastActionText}`, 15, 45);
-    if(robot.isThinking) {
-      simCtx.fillStyle = "#ff0";
-      simCtx.fillText("THINKING...", 15, 65);
+    // 🤖 テキスト情報の描画（ここが重要）
+    simCtx.fillStyle = robot.statusColor;
+    simCtx.font = "bold 20px 'Courier New', monospace"; // 少し大きく
+    simCtx.fillText("▶ SENSOR: " + robot.lastDistText, 20, 40);
+    simCtx.fillText("▶ AI    : " + robot.lastActionText, 20, 70);
+    
+    if (robot.isThinking) {
+      simCtx.fillStyle = "#FFFF00";
+      simCtx.font = "14px monospace";
+      simCtx.fillText("Gemma is thinking...", 20, 100);
     }
 
-    // ロボット本体の描画
+    // ロボット描画
     simCtx.save();
     simCtx.translate(robot.x, robot.y);
     simCtx.rotate(robot.theta);
-    simCtx.strokeStyle = '#0f0';
+    simCtx.strokeStyle = robot.statusColor;
     simCtx.lineWidth = 3;
     simCtx.strokeRect(-12, -12, 24, 24);
     simCtx.beginPath();
-    simCtx.moveTo(0,0); simCtx.lineTo(18,0);
+    simCtx.moveTo(0,0); simCtx.lineTo(20,0);
     simCtx.stroke();
     simCtx.restore();
   }
