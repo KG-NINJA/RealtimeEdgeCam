@@ -1,110 +1,493 @@
-(function () {
-  'use strict';
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A-1 Robot Vision - Smooth Control</title>
+<style>
+* { box-sizing: border-box; }
+body { 
+  margin: 0; padding: 0; 
+  background: #000; color: #0f0; 
+  font-family: 'Courier New', monospace; 
+  font-size: 14px; 
+  overflow: hidden; 
+  width: 100vw; height: 100vh; 
+}
+#camera-feed { 
+  position: absolute; top: 0; left: 0; 
+  width: 100%; height: 100%; 
+  z-index: 1; 
+}
+#cv { display: block; width: 100%; height: 100%; }
+#ui { 
+  position: fixed; top: 15px; left: 15px; 
+  background: rgba(0, 0, 0, 0.95); 
+  padding: 15px; 
+  border: 2px solid #0f0; 
+  z-index: 100;
+  min-width: 280px;
+  box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+}
+.status-line { 
+  margin: 8px 0; 
+  padding: 5px 0;
+  border-bottom: 1px solid #033; 
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.label { flex: 1; }
+.value { 
+  font-weight: bold; 
+  padding: 0 8px;
+  min-width: 80px;
+  text-align: right;
+}
+.robot-sim { 
+  position: fixed; 
+  bottom: 15px; right: 15px; 
+  border: 3px solid #0f0; 
+  background: rgba(0, 15, 0, 0.95); 
+  z-index: 50;
+  box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+}
+#video { position: fixed; left: -10000px; opacity: 0; }
+.robot-body {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.direction-indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 30px;
+  height: 40px;
+  border: 2px solid #0f0;
+  border-radius: 15px 15px 5px 5px;
+}
+.direction-arrow {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 12px solid #0f0;
+}
+.info-text {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.action-label {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  font-size: 13px;
+  font-weight: bold;
+  color: #0f0;
+  text-shadow: 0 0 5px #0f0;
+}
+.distance-bar {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  width: 80px;
+  height: 15px;
+  border: 1px solid #0f0;
+  background: #001;
+}
+.distance-fill {
+  height: 100%;
+  background: #0f0;
+  transition: width 0.3s ease;
+}
+#keys-info {
+  position: fixed;
+  bottom: 15px;
+  left: 15px;
+  background: rgba(0, 0, 0, 0.95);
+  border: 2px solid #0f0;
+  padding: 10px;
+  font-size: 12px;
+  z-index: 50;
+  box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+}
+</style>
+</head>
+<body>
 
-  const API_URL = "https://kgninja-functiongemmabotdemo-docker.hf.space/decide";
+<div id="camera-feed"><canvas id="cv"></canvas></div>
 
-  var robot = {
-    controlEnabled: false,
-    lastDecisionAt: 0,
-    isThinking: false,
-    lastAction: "WAITING",
-    lastDist: 0
-  };
+<div id="ui">
+  <div style="margin-bottom: 10px; font-weight: bold; font-size: 16px; text-shadow: 0 0 10px #0f0;">
+    ⚙️ A-1 ROBOT VISION
+  </div>
+  <div class="status-line">
+    <span class="label">🎯 障害物距離</span>
+    <span class="value" id="obs-score">100</span>
+  </div>
+  <div class="status-line">
+    <span class="label">🧠 Gemma思考</span>
+    <span class="value" id="gemma-status">待機中</span>
+  </div>
+  <div class="status-line">
+    <span class="label">🤖 ロボット状態</span>
+    <span class="value" id="robot-mode" style="color:#f00">停止中</span>
+  </div>
+  <div class="status-line">
+    <span class="label">📍 現在の指示</span>
+    <span class="value" id="last-decision">-</span>
+  </div>
+  <div class="status-line">
+    <span class="label">⚡ 速度</span>
+    <span class="value" id="speed-display">0.0</span>
+  </div>
+</div>
 
-  async function askGemmaDecision() {
-    if (robot.isThinking || !robot.controlEnabled) return;
-    robot.isThinking = true;
+<div id="keys-info">
+  <div style="font-weight: bold; margin-bottom: 5px;">操作キー</div>
+  <div>M キー: AI認識 ON/OFF</div>
+  <div>R キー: ロボット動作 ON/OFF</div>
+</div>
 
-    // 現在のスコアを取得
-    const rawScore = window.state?.lastObstacleScore || 1.0;
-    robot.lastDist = Math.round(Number(rawScore) * 100);
+<canvas id="robot-sim" class="robot-sim" width="280" height="280"></canvas>
+<video id="video" autoplay playsinline muted></video>
 
-    try {
-      const res = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          front_distance: robot.lastDist,
-          speed: 0, 
-          ml_results: []
-        })
-      });
+<script src="https://docs.opencv.org/4.x/opencv.js"></script>
 
-      const json = await res.json();
-      const match = json.data[0].match(/\{.*\}/s);
-      
-      if (match) {
-        const data = JSON.parse(match[0]);
-        robot.lastAction = data.action.toUpperCase();
+<script>
+const state = {
+  cvReady: false,
+  mlReady: false,
+  mlEnabled: false,
+  mlInFlight: false,
+  lastObstacleScore: 100,
+  robotEnabled: false,
+  
+  // ロボットシミュレータの状態
+  robotX: 140,
+  robotY: 140,
+  robotTheta: 0,
+  robotVLin: 0,
+  robotVAng: 0,
+  targetVLin: 0,
+  targetVAng: 0,
+  
+  // Gemma AIの状態
+  gemmaLastAction: 'WAITING',
+  gemmaNextAt: 0,
+  gemmaThinking: false
+};
 
-        // 1. 左側パネルの "Last Decision:" 行を特定して書き換え
-        const statusLines = document.querySelectorAll('div, span, p');
-        statusLines.forEach(el => {
-          if (el.textContent.includes('Last Decision')) {
-            el.innerHTML = `📍 Last Decision: <span style="color:#0f0">${robot.lastAction}</span>`;
-          }
-        });
-      }
-    } catch (e) {
-      robot.lastAction = "ERROR";
-    } finally {
-      robot.isThinking = false;
+const video = document.getElementById('video');
+const cvCanvas = document.getElementById('cv');
+
+/* TensorFlow.js と COCO-SSD の読み込み */
+async function loadML() {
+  if (window.tf && window.cocoSsd) return;
+  
+  console.log("Loading TensorFlow.js...");
+  
+  try {
+    if (!window.tf) {
+      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0");
     }
+    if (!window.cocoSsd) {
+      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3");
+    }
+    state.model = await cocoSsd.load();
+    state.mlReady = true;
+    document.getElementById('gemma-status').textContent = '準備完了';
+    console.log("ML Model Ready");
+  } catch (e) {
+    console.error("ML Load Error:", e);
+    document.getElementById('gemma-status').textContent = 'エラー';
   }
+}
 
-  // 既存のシステム描画の後に実行されるようにフック
-  function injectHUD() {
-    const canvases = document.querySelectorAll('canvas');
-    if (canvases.length < 2) return; // メイン映像とシミュレータの計2枚以上を想定
-
-    // 右下のシミュレータ用Canvasを特定（通常は小さい方のCanvas）
-    let simCanvas = canvases[canvases.length - 1];
-    const ctx = simCanvas.getContext('2d');
-
-    // 描画ループ
-    function drawLoop() {
-      if (robot.controlEnabled) {
-        const now = performance.now();
-        if (now - robot.lastDecisionAt > 1500) {
-          askGemmaDecision();
-          robot.lastDecisionAt = now;
-        }
-
-        // シミュレータ枠内にAI情報を強制描画
-        ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-        ctx.fillRect(5, 5, 120, 45); // テキスト背景
-        
-        ctx.font = "bold 12px monospace";
-        ctx.fillStyle = "#0f0";
-        ctx.fillText("AI: " + robot.lastAction, 10, 20);
-        ctx.fillText("DIST: " + robot.lastDist, 10, 35);
-        
-        if (robot.isThinking) {
-          ctx.fillStyle = "#ff0";
-          ctx.fillText("THINKING...", 10, 48);
-        }
-      }
-      requestAnimationFrame(drawLoop);
-    }
-    drawLoop();
-  }
-
-  window.addEventListener('keydown', (e) => {
-    if (e.code === 'KeyR') {
-      robot.controlEnabled = !robot.controlEnabled;
-      console.log("Autonomous AI Mode:", robot.controlEnabled ? "ON" : "OFF");
-      
-      // Robot Mode: OFF/ON の表示も連動させる
-      const modeLines = document.querySelectorAll('div, span, p');
-      modeLines.forEach(el => {
-        if (el.textContent.includes('Robot Mode')) {
-          el.innerHTML = `🏎️ Robot Mode: <span style="color:${robot.controlEnabled ? '#0f0' : '#f00'}">${robot.controlEnabled ? 'ON' : 'OFF'}</span>`;
-        }
-      });
-    }
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
   });
+}
 
-  // ページ読み込み完了後にインジェクション開始
-  setTimeout(injectHUD, 2000);
+/* OpenCV処理 */
+const capCanvas = document.createElement('canvas');
+const capCtx = capCanvas.getContext('2d', { willReadFrequently: true });
 
-})();
+function runCV() {
+  if (!state.cvReady || !video.videoWidth) return;
+  
+  capCanvas.width = video.videoWidth;
+  capCanvas.height = video.videoHeight;
+  capCtx.drawImage(video, 0, 0);
+  
+  let src = cv.matFromImageData(capCtx.getImageData(0, 0, video.videoWidth, video.videoHeight));
+  let gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.Canny(gray, gray, 50, 100);
+  cv.imshow(cvCanvas, gray);
+  
+  src.delete();
+  gray.delete();
+}
+
+async function runML() {
+  if (!state.mlEnabled || !state.mlReady || state.mlInFlight) return;
+  
+  state.mlInFlight = true;
+  
+  try {
+    const preds = await state.model.detect(capCanvas);
+    
+    if (preds.length > 0) {
+      let obj = preds.sort((a, b) => b.score - a.score)[0];
+      // スコア: 高い = 近い。スコアを距離(5~100)に変換
+      state.lastObstacleScore = Math.max(5, Math.min(100, Math.round(obj.score * 100)));
+    } else {
+      state.lastObstacleScore = 100; // 何も見えない = 遠い
+    }
+    
+    document.getElementById('obs-score').textContent = state.lastObstacleScore;
+    
+  } catch (e) {
+    console.error("ML Error:", e);
+  } finally {
+    state.mlInFlight = false;
+  }
+}
+
+/* Gemma AI への問い合わせ */
+async function askGemma(now) {
+  if (!state.robotEnabled || now < state.gemmaNextAt || state.gemmaThinking) return;
+  
+  state.gemmaThinking = true;
+  state.gemmaNextAt = now + 2500; // 2.5秒ごとに判定
+  document.getElementById('gemma-status').textContent = '思考中...';
+  
+  // 距離を5-100にマッピング
+  const distance = state.lastObstacleScore;
+  
+  try {
+    const res = await fetch('https://kgninja-functiongemmabotdemo-docker.hf.space/decide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        front_distance: distance,
+        speed: state.robotVLin
+      })
+    });
+    
+    const json = await res.json();
+    const match = json.data[0].match(/\{.*\}/s);
+    
+    if (match) {
+      const d = JSON.parse(match[0]);
+      state.gemmaLastAction = (d.action || 'STOP').toUpperCase();
+      document.getElementById('last-decision').textContent = state.gemmaLastAction;
+      document.getElementById('gemma-status').textContent = '完了 ✓';
+      
+      // 目標速度を設定（スムーズに遷移させるため targetVLin を使う）
+      console.log("Gemma Action:", state.gemmaLastAction); // デバッグ出力
+      
+      if (state.gemmaLastAction.includes('FORWARD')) {
+        state.targetVLin = 0.8;
+        state.targetVAng = 0;
+      } else if (state.gemmaLastAction.includes('LEFT') || state.gemmaLastAction.includes('turn_left')) {
+        state.targetVLin = 0.3;
+        state.targetVAng = 2.0; // 左回転
+      } else if (state.gemmaLastAction.includes('RIGHT') || state.gemmaLastAction.includes('turn_right')) {
+        state.targetVLin = 0.3;
+        state.targetVAng = -2.0; // 右回転
+      } else {
+        state.targetVLin = 0;
+        state.targetVAng = 0;
+      }
+    }
+  } catch (e) {
+    console.error("Gemma API Error:", e);
+    document.getElementById('gemma-status').textContent = 'API失敗';
+    state.targetVLin = 0;
+    state.targetVAng = 0;
+  } finally {
+    state.gemmaThinking = false;
+  }
+}
+
+/* メインアニメーションループ */
+function animate(now) {
+  // OpenCV初期化
+  if (!state.cvReady && video.videoWidth > 0) {
+    cvCanvas.width = 320;
+    cvCanvas.height = 240;
+    state.cvReady = true;
+  }
+  
+  // センサー処理
+  runCV();
+  runML();
+  
+  // AI判定
+  if (state.mlEnabled) {
+    askGemma(now);
+  }
+  
+  // ロボット物理演算（スムーズな加速度）
+  if (state.robotEnabled) {
+    // 速度を徐々に目標速度に近づける
+    state.robotVLin += (state.targetVLin - state.robotVLin) * 0.15;
+    state.robotVAng += (state.targetVAng - state.robotVAng) * 0.15;
+    
+    // 位置と方向の更新
+    state.robotTheta += state.robotVAng * 0.016; // deltaTime約16ms
+    state.robotX += Math.cos(state.robotTheta) * state.robotVLin * 3;
+    state.robotY += Math.sin(state.robotTheta) * state.robotVLin * 3;
+    
+    // 境界処理
+    state.robotX = Math.max(15, Math.min(265, state.robotX));
+    state.robotY = Math.max(15, Math.min(265, state.robotY));
+  }
+  
+  // 速度表示を更新
+  document.getElementById('speed-display').textContent = state.robotVLin.toFixed(2);
+  
+  // シミュレータ描画
+  drawSimulator();
+  
+  requestAnimationFrame(animate);
+}
+
+function drawSimulator() {
+  const canvas = document.getElementById('robot-sim');
+  const ctx = canvas.getContext('2d');
+  
+  // 背景
+  ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
+  ctx.fillRect(0, 0, 280, 280);
+  
+  // グリッド（参考線）
+  ctx.strokeStyle = 'rgba(0, 255, 0, 0.1)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 280; i += 28) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i, 280);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, i);
+    ctx.lineTo(280, i);
+    ctx.stroke();
+  }
+  
+  // AI指示テキスト
+  ctx.font = 'bold 16px monospace';
+  ctx.fillStyle = '#0f0';
+  ctx.fillText('AI: ' + state.gemmaLastAction, 15, 30);
+  
+  // 距離ゲージ
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(15, 45, 100, 20);
+  ctx.strokeStyle = '#0f0';
+  ctx.strokeRect(15, 45, 100, 20);
+  
+  const fillWidth = (state.lastObstacleScore / 100) * 100;
+  ctx.fillStyle = state.lastObstacleScore > 50 ? '#0f0' : state.lastObstacleScore > 20 ? '#ff0' : '#f00';
+  ctx.fillRect(15, 45, fillWidth, 20);
+  
+  ctx.font = '11px monospace';
+  ctx.fillStyle = '#0f0';
+  ctx.fillText('距離: ' + state.lastObstacleScore, 20, 58);
+  
+  // ロボット本体
+  ctx.save();
+  ctx.translate(state.robotX, state.robotY);
+  ctx.rotate(state.robotTheta);
+  
+  // ロボットボディ（円形）
+  ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+  ctx.beginPath();
+  ctx.arc(0, 0, 12, 0, Math.PI * 2);
+  ctx.fill();
+  
+  ctx.strokeStyle = '#0f0';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  
+  // 前方指示（三角形）
+  ctx.fillStyle = '#0f0';
+  ctx.beginPath();
+  ctx.moveTo(0, -12);
+  ctx.lineTo(-6, 6);
+  ctx.lineTo(6, 6);
+  ctx.closePath();
+  ctx.fill();
+  
+  ctx.restore();
+  
+  // 情報テキスト
+  ctx.font = '10px monospace';
+  ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
+  ctx.fillText('速度: ' + state.robotVLin.toFixed(2), 15, 270);
+  ctx.fillText('角速度: ' + state.robotVAng.toFixed(1), 120, 270);
+  
+  // ロボット状態
+  if (!state.robotEnabled) {
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+    ctx.font = 'bold 20px monospace';
+    ctx.fillText('STOPPED', 70, 140);
+  }
+}
+
+/* キー入力 */
+window.addEventListener('keydown', e => {
+  if (e.code === 'KeyM') {
+    state.mlEnabled = !state.mlEnabled;
+    if (state.mlEnabled) {
+      loadML();
+      document.getElementById('gemma-status').textContent = '読み込み中...';
+    } else {
+      document.getElementById('gemma-status').textContent = '無効';
+      document.getElementById('last-decision').textContent = '-';
+    }
+  }
+  
+  if (e.code === 'KeyR') {
+    state.robotEnabled = !state.robotEnabled;
+    const modeEl = document.getElementById('robot-mode');
+    modeEl.textContent = state.robotEnabled ? '稼働中' : '停止中';
+    modeEl.style.color = state.robotEnabled ? '#0f0' : '#f00';
+    
+    if (!state.robotEnabled) {
+      state.targetVLin = 0;
+      state.targetVAng = 0;
+      state.robotVLin = 0;
+      state.robotVAng = 0;
+    }
+  }
+});
+
+/* 起動 */
+cv['onRuntimeInitialized'] = () => {
+  navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
+    video.srcObject = s;
+    video.play();
+    requestAnimationFrame(animate);
+    console.log("System Ready - Press M to enable AI, R to enable Robot");
+  });
+};
+</script>
+
+</body>
+</html>
