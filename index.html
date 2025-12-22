@@ -279,6 +279,8 @@ async function askGemma(now) {
   
   // 距離を5-100にマッピング
   const distance = state.lastObstacleScore;
+  console.log("=== Gemma API Call ===");
+  console.log("Distance:", distance);
   
   try {
     const res = await fetch('https://kgninja-functiongemmabotdemo-docker.hf.space/decide', {
@@ -291,28 +293,40 @@ async function askGemma(now) {
     });
     
     const json = await res.json();
+    console.log("API Response:", json);
+    
     const match = json.data[0].match(/\{.*\}/s);
+    console.log("Match result:", match);
     
     if (match) {
       const d = JSON.parse(match[0]);
+      console.log("Parsed JSON:", d);
+      
       state.gemmaLastAction = (d.action || 'STOP').toUpperCase();
       document.getElementById('last-decision').textContent = state.gemmaLastAction;
       document.getElementById('gemma-status').textContent = '完了 ✓';
       
-      // 目標速度を設定（スムーズに遷移させるため targetVLin を使う）
+      console.log("Gemma Action:", state.gemmaLastAction);
+      
       if (state.gemmaLastAction.includes('FORWARD')) {
         state.targetVLin = 0.8;
         state.targetVAng = 0;
-      } else if (state.gemmaLastAction.includes('LEFT')) {
+        console.log("→ FORWARD");
+      } else if (state.gemmaLastAction.includes('LEFT') || state.gemmaLastAction.includes('turn_left')) {
         state.targetVLin = 0.3;
         state.targetVAng = 2.0; // 左回転
-      } else if (state.gemmaLastAction.includes('RIGHT')) {
+        console.log("→ LEFT");
+      } else if (state.gemmaLastAction.includes('RIGHT') || state.gemmaLastAction.includes('turn_right')) {
         state.targetVLin = 0.3;
         state.targetVAng = -2.0; // 右回転
+        console.log("→ RIGHT");
       } else {
         state.targetVLin = 0;
         state.targetVAng = 0;
+        console.log("→ STOP");
       }
+    } else {
+      console.warn("No JSON match found in API response");
     }
   } catch (e) {
     console.error("Gemma API Error:", e);
