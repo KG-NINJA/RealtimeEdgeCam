@@ -2,18 +2,16 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>A-1 Poodle Robot – Steering + Edge</title>
-
+<title>A-1 Poodle Robot – Stable Edition</title>
 <style>
 body { margin:0; background:#000; color:#0f0; font-family:monospace; overflow:hidden; }
 #ui {
   position:fixed; top:10px; left:10px;
-  background:rgba(0,0,0,0.9);
+  background:rgba(0,0,0,0.85);
   border:2px solid #0f0;
   padding:10px;
   z-index:100;
-  min-width:260px;
+  min-width:240px;
 }
 .line { display:flex; justify-content:space-between; margin:4px 0; }
 canvas { position:absolute; inset:0; width:100vw; height:100vh; }
@@ -27,9 +25,9 @@ video { position:fixed; left:-9999px; }
 
 <div id="ui">
   <b>🐩 A-1 POODLE ROBOT</b>
-  <div class="line"><span>Edge距離</span><span id="dist">100</span></div>
-  <div class="line"><span>速度 v</span><span id="vlin">0.0</span></div>
-  <div class="line"><span>角速度 ω</span><span id="vang">0.0</span></div>
+  <div class="line"><span>Edge距離</span><span id="dist">-</span></div>
+  <div class="line"><span>v</span><span id="vlin">0.00</span></div>
+  <div class="line"><span>ω</span><span id="vang">0.00</span></div>
   <div class="line"><span>感情</span><span id="emotion">🐩 うれしい！</span></div>
 </div>
 
@@ -38,150 +36,106 @@ video { position:fixed; left:-9999px; }
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 
 <script>
-/* ======================
+/* =====================
    STATE
-====================== */
+===================== */
 const state = {
-  lastObstacleScore: 100,
-  robotVLin: 0,
-  robotVAng: 0,
-  targetVLin: 0,
-  targetVAng: 0,
-
-  emotionBase:'happy',
-  emotionOverlay:null,
-  emotionOverlayUntil:0,
-  emotionState:'happy',
-  emotionIntensity:0.7,
-  emotionNextUpdate:0
+  obstacle:100,
+  v:0, w:0,
+  tv:0.4, tw:0,
+  emotion:'happy'
 };
 
-const video = document.getElementById("video");
-const canvas = document.getElementById("view");
-const ctx = canvas.getContext("2d");
-canvas.width = innerWidth;
-canvas.height = innerHeight;
+const video = document.getElementById('video');
+const canvas = document.getElementById('view');
+const ctx = canvas.getContext('2d');
 
-/* ======================
+/* =====================
    CAMERA
-====================== */
+===================== */
 navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})
-  .then(s => { video.srcObject = s; });
+.then(s => video.srcObject = s);
 
-/* ======================
-   EDGE DETECTION
-====================== */
-let src, gray, edges;
+/* =====================
+   OPENCV READY
+===================== */
+cv['onRuntimeInitialized'] = () => {
+  video.addEventListener('loadedmetadata', init);
+};
 
-function processEdge() {
-  if (!cv || video.readyState < 2) return;
+let src, gray, edge;
 
-  if (!src) {
-    src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-    gray = new cv.Mat();
-    edges = new cv.Mat();
-  }
+function init(){
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
 
+  src  = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+  gray = new cv.Mat();
+  edge = new cv.Mat();
+
+  requestAnimationFrame(loop);
+}
+
+/* =====================
+   EDGE + STEERING
+===================== */
+function loop(){
   ctx.drawImage(video,0,0,canvas.width,canvas.height);
-  let imgData = ctx.getImageData(0,0,video.videoWidth,video.videoHeight);
-  src.data.set(imgData.data);
+  const img = ctx.getImageData(0,0,canvas.width,canvas.height);
+  src.data.set(img.data);
 
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  cv.Canny(gray, edges, 80, 150);
+  cv.Canny(gray, edge, 80, 150);
 
-  // 前方中央領域のエッジ密度
-  const cx = Math.floor(edges.cols/2);
-  const w = Math.floor(edges.cols*0.2);
-  let edgeCount = 0;
-  for(let y=edges.rows*0.4;y<edges.rows*0.6;y++){
+  // 前方中央エッジ密度
+  let count = 0;
+  const cx = Math.floor(edge.cols/2);
+  const w = Math.floor(edge.cols*0.15);
+  for(let y=edge.rows*0.4;y<edge.rows*0.6;y++){
     for(let x=cx-w;x<cx+w;x++){
-      if(edges.ucharPtr(y,x)[0]>0) edgeCount++;
+      if(edge.ucharPtr(y,x)[0]) count++;
     }
   }
 
-  state.lastObstacleScore = Math.max(0,100 - edgeCount/80);
-  document.getElementById("dist").textContent = state.lastObstacleScore.toFixed(0);
+  state.obstacle = Math.max(0,100 - count/100);
+  document.getElementById('dist').textContent = state.obstacle.toFixed(0);
 
-  // 描画（ワイヤーフレーム風）
-  ctx.globalAlpha=0.6;
-  ctx.drawImage(edges,0,0,canvas.width,canvas.height);
-  ctx.globalAlpha=1;
-}
-
-/* ======================
-   STEERING
-====================== */
-function updateSteering(){
-  const d = state.lastObstacleScore;
-
-  if(d < 30){
-    state.targetVLin = 0.1;
-    state.targetVAng = 0.8;   // 回避旋回
-  } else if(d < 60){
-    state.targetVLin = 0.3;
-    state.targetVAng = 0.3;
+  /* ---- STEERING ---- */
+  if(state.obstacle < 30){
+    state.tv = 0.1; state.tw = 0.6;
+    state.emotion = 'alert';
+  } else if(state.obstacle < 60){
+    state.tv = 0.3; state.tw = 0.3;
+    state.emotion = 'curious';
   } else {
-    state.targetVLin = 0.6;
-    state.targetVAng = 0.0;
+    state.tv = 0.5; state.tw = 0;
+    state.emotion = 'happy';
   }
 
-  // 慣性（なつっこい動き）
-  state.robotVLin += (state.targetVLin - state.robotVLin)*0.05;
-  state.robotVAng += (state.targetVAng - state.robotVAng)*0.05;
+  state.v += (state.tv - state.v)*0.05;
+  state.w += (state.tw - state.w)*0.05;
 
-  document.getElementById("vlin").textContent = state.robotVLin.toFixed(2);
-  document.getElementById("vang").textContent = state.robotVAng.toFixed(2);
-}
+  document.getElementById('vlin').textContent = state.v.toFixed(2);
+  document.getElementById('vang').textContent = state.w.toFixed(2);
 
-/* ======================
-   🐩 POODLE EMOTION
-====================== */
-function updateEmotion(){
-  const now = performance.now();
-  if(now < state.emotionNextUpdate) return;
-  state.emotionNextUpdate = now + 300;
-
-  const d = state.lastObstacleScore;
-  const fast = state.robotVLin > 0.5;
-  const safe = d > 60;
-
-  if(fast && d>80){
-    state.emotionBase='excited';
-  } else if(safe){
-    state.emotionBase='happy';
-  } else {
-    state.emotionBase='curious';
-  }
-
-  if(d<30){
-    state.emotionOverlay='alert';
-    state.emotionOverlayUntil=now+600;
-  }
-
-  if(state.emotionOverlay && now>state.emotionOverlayUntil){
-    state.emotionOverlay=null;
-  }
-
-  state.emotionState = state.emotionOverlay || state.emotionBase;
-
-  document.getElementById("emotion").textContent = {
-    excited:'🐩✨ たのしい！',
+  document.getElementById('emotion').textContent = {
     happy:'🐩 うれしい！',
     curious:'🐩？ なになに？',
     alert:'🐩！ ちょっと待って'
-  }[state.emotionState];
-}
+  }[state.emotion];
 
-/* ======================
-   LOOP
-====================== */
-function loop(){
-  processEdge();
-  updateSteering();
-  updateEmotion();
+  /* ---- DRAW EDGE OVERLAY ---- */
+  const edgeImg = new ImageData(
+    new Uint8ClampedArray(edge.data),
+    edge.cols,
+    edge.rows
+  );
+  ctx.globalAlpha = 0.4;
+  ctx.putImageData(edgeImg,0,0);
+  ctx.globalAlpha = 1;
+
   requestAnimationFrame(loop);
 }
-requestAnimationFrame(loop);
 </script>
 
 </body>
