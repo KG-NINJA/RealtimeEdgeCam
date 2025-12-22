@@ -53,62 +53,6 @@ body {
   box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
 }
 #video { position: fixed; left: -10000px; opacity: 0; }
-.robot-body {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-.direction-indicator {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 30px;
-  height: 40px;
-  border: 2px solid #0f0;
-  border-radius: 15px 15px 5px 5px;
-}
-.direction-arrow {
-  position: absolute;
-  top: 5px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 0;
-  height: 0;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-bottom: 12px solid #0f0;
-}
-.info-text {
-  position: absolute;
-  bottom: 10px;
-  left: 10px;
-  font-size: 11px;
-  line-height: 1.4;
-}
-.action-label {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  font-size: 13px;
-  font-weight: bold;
-  color: #0f0;
-  text-shadow: 0 0 5px #0f0;
-}
-.distance-bar {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  width: 80px;
-  height: 15px;
-  border: 1px solid #0f0;
-  background: #001;
-}
-.distance-fill {
-  height: 100%;
-  background: #0f0;
-  transition: width 0.3s ease;
-}
 #keys-info {
   position: fixed;
   bottom: 15px;
@@ -172,7 +116,6 @@ const state = {
   lastObstacleScore: 100,
   robotEnabled: false,
   
-  // ロボットシミュレータの状態
   robotX: 140,
   robotY: 140,
   robotTheta: 0,
@@ -181,7 +124,6 @@ const state = {
   targetVLin: 0,
   targetVAng: 0,
   
-  // Gemma AIの状態
   gemmaLastAction: 'WAITING',
   gemmaNextAt: 0,
   gemmaThinking: false
@@ -190,7 +132,6 @@ const state = {
 const video = document.getElementById('video');
 const cvCanvas = document.getElementById('cv');
 
-/* TensorFlow.js と COCO-SSD の読み込み */
 async function loadML() {
   if (window.tf && window.cocoSsd) return;
   
@@ -223,7 +164,6 @@ function loadScript(src) {
   });
 }
 
-/* OpenCV処理 */
 const capCanvas = document.createElement('canvas');
 const capCtx = capCanvas.getContext('2d', { willReadFrequently: true });
 
@@ -254,10 +194,9 @@ async function runML() {
     
     if (preds.length > 0) {
       let obj = preds.sort((a, b) => b.score - a.score)[0];
-      // スコア: 高い = 近い。スコアを距離(5~100)に変換
       state.lastObstacleScore = Math.max(5, Math.min(100, Math.round(obj.score * 100)));
     } else {
-      state.lastObstacleScore = 100; // 何も見えない = 遠い
+      state.lastObstacleScore = 100;
     }
     
     document.getElementById('obs-score').textContent = state.lastObstacleScore;
@@ -269,17 +208,14 @@ async function runML() {
   }
 }
 
-/* Gemma AI への問い合わせ */
 async function askGemma(now) {
   if (!state.robotEnabled || now < state.gemmaNextAt || state.gemmaThinking) return;
   
   state.gemmaThinking = true;
-  state.gemmaNextAt = now + 2500; // 2.5秒ごとに判定
+  state.gemmaNextAt = now + 2500;
   document.getElementById('gemma-status').textContent = '思考中...';
   
-  // 距離を5-100にマッピング
   const distance = state.lastObstacleScore;
-  console.log("=== Gemma API Call ===");
   console.log("Distance:", distance);
   
   try {
@@ -295,60 +231,54 @@ async function askGemma(now) {
     const json = await res.json();
     console.log("API Response:", json);
     
-    let d = null;
+    let action = null;
     
-    // APIレスポンスをパース
     if (json.data && json.data[0]) {
       const match = json.data[0].match(/\{.*\}/s);
-      console.log("Match result:", match);
-      
       if (match) {
-        d = JSON.parse(match[0]);
-        console.log("Parsed JSON:", d);
+        const d = JSON.parse(match[0]);
+        action = (d.action || '').toLowerCase();
+        console.log("Parsed action:", action);
       }
     }
     
-    // APIが正常に応答しない場合は距離ベースの簡易ロジックを使用
-    if (!d || !d.action) {
-      console.warn("⚠️ API response invalid, using distance-based logic");
+    // APIが無効な応答の場合、距離ベースのフォールバック
+    if (!action) {
+      console.warn("⚠️ API invalid, using fallback logic");
       if (distance < 30) {
-        // 近い: 回避行動
-        d = { action: Math.random() > 0.5 ? 'turn_left' : 'turn_right' };
+        action = Math.random() > 0.5 ? 'turn_left' : 'turn_right';
       } else if (distance < 60) {
-        // 中程度: ランダム
         const actions = ['move_forward', 'turn_left', 'turn_right'];
-        d = { action: actions[Math.floor(Math.random() * 3)] };
+        action = actions[Math.floor(Math.random() * 3)];
       } else {
-        // 遠い: 前進
-        d = { action: 'move_forward' };
+        action = 'move_forward';
       }
-      console.log("Fallback action:", d.action);
+      console.log("Fallback action:", action);
     }
     
-    state.gemmaLastAction = (d.action || 'stop').toLowerCase();
-    const displayAction = state.gemmaLastAction.toUpperCase().replace('_', ' ');
-    document.getElementById('last-decision').textContent = displayAction;
+    state.gemmaLastAction = action.toUpperCase().replace('_', ' ');
+    document.getElementById('last-decision').textContent = state.gemmaLastAction;
     document.getElementById('gemma-status').textContent = '完了 ✓';
     
-    console.log("Gemma Action:", state.gemmaLastAction);
-    
-    if (state.gemmaLastAction === 'move_forward' || state.gemmaLastAction.includes('forward')) {
+    // アクションに基づいて目標速度を設定
+    if (action === 'move_forward') {
       state.targetVLin = 0.8;
       state.targetVAng = 0;
       console.log("→ FORWARD");
-    } else if (state.gemmaLastAction === 'turn_left') {
+    } else if (action === 'turn_left') {
       state.targetVLin = 0.3;
-      state.targetVAng = -2.0; // 左回転
+      state.targetVAng = -2.0;  // 左回転
       console.log("→ LEFT");
-    } else if (state.gemmaLastAction === 'turn_right') {
+    } else if (action === 'turn_right') {
       state.targetVLin = 0.3;
-      state.targetVAng = 2.0; // 右回転
+      state.targetVAng = 2.0;   // 右回転
       console.log("→ RIGHT");
     } else {
       state.targetVLin = 0;
       state.targetVAng = 0;
       console.log("→ STOP");
     }
+    
   } catch (e) {
     console.error("Gemma API Error:", e);
     document.getElementById('gemma-status').textContent = 'API失敗';
@@ -359,44 +289,34 @@ async function askGemma(now) {
   }
 }
 
-/* メインアニメーションループ */
 function animate(now) {
-  // OpenCV初期化
   if (!state.cvReady && video.videoWidth > 0) {
     cvCanvas.width = 320;
     cvCanvas.height = 240;
     state.cvReady = true;
   }
   
-  // センサー処理
   runCV();
   runML();
   
-  // AI判定
   if (state.mlEnabled) {
     askGemma(now);
   }
   
-  // ロボット物理演算（スムーズな加速度）
   if (state.robotEnabled) {
-    // 速度を徐々に目標速度に近づける
     state.robotVLin += (state.targetVLin - state.robotVLin) * 0.15;
     state.robotVAng += (state.targetVAng - state.robotVAng) * 0.15;
     
-    // 位置と方向の更新
-    state.robotTheta += state.robotVAng * 0.016; // deltaTime約16ms
+    state.robotTheta += state.robotVAng * 0.016;
     state.robotX += Math.cos(state.robotTheta) * state.robotVLin * 3;
     state.robotY += Math.sin(state.robotTheta) * state.robotVLin * 3;
     
-    // 境界処理
     state.robotX = Math.max(15, Math.min(265, state.robotX));
     state.robotY = Math.max(15, Math.min(265, state.robotY));
   }
   
-  // 速度表示を更新
   document.getElementById('speed-display').textContent = state.robotVLin.toFixed(2);
   
-  // シミュレータ描画
   drawSimulator();
   
   requestAnimationFrame(animate);
@@ -406,11 +326,9 @@ function drawSimulator() {
   const canvas = document.getElementById('robot-sim');
   const ctx = canvas.getContext('2d');
   
-  // 背景
   ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
   ctx.fillRect(0, 0, 280, 280);
   
-  // グリッド（参考線）
   ctx.strokeStyle = 'rgba(0, 255, 0, 0.1)';
   ctx.lineWidth = 1;
   for (let i = 0; i <= 280; i += 28) {
@@ -424,12 +342,10 @@ function drawSimulator() {
     ctx.stroke();
   }
   
-  // AI指示テキスト
   ctx.font = 'bold 16px monospace';
   ctx.fillStyle = '#0f0';
   ctx.fillText('AI: ' + state.gemmaLastAction, 15, 30);
   
-  // 距離ゲージ
   ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
   ctx.fillRect(15, 45, 100, 20);
   ctx.strokeStyle = '#0f0';
@@ -443,12 +359,10 @@ function drawSimulator() {
   ctx.fillStyle = '#0f0';
   ctx.fillText('距離: ' + state.lastObstacleScore, 20, 58);
   
-  // ロボット本体
   ctx.save();
   ctx.translate(state.robotX, state.robotY);
   ctx.rotate(state.robotTheta);
   
-  // ロボットボディ（円形）
   ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
   ctx.beginPath();
   ctx.arc(0, 0, 12, 0, Math.PI * 2);
@@ -458,7 +372,6 @@ function drawSimulator() {
   ctx.lineWidth = 2;
   ctx.stroke();
   
-  // 前方指示（三角形）
   ctx.fillStyle = '#0f0';
   ctx.beginPath();
   ctx.moveTo(0, -12);
@@ -469,13 +382,11 @@ function drawSimulator() {
   
   ctx.restore();
   
-  // 情報テキスト
   ctx.font = '10px monospace';
   ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
   ctx.fillText('速度: ' + state.robotVLin.toFixed(2), 15, 270);
   ctx.fillText('角速度: ' + state.robotVAng.toFixed(1), 120, 270);
   
-  // ロボット状態
   if (!state.robotEnabled) {
     ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
     ctx.font = 'bold 20px monospace';
@@ -483,7 +394,6 @@ function drawSimulator() {
   }
 }
 
-/* キー入力 */
 window.addEventListener('keydown', e => {
   if (e.code === 'KeyM') {
     state.mlEnabled = !state.mlEnabled;
@@ -511,7 +421,6 @@ window.addEventListener('keydown', e => {
   }
 });
 
-/* 起動 */
 cv['onRuntimeInitialized'] = () => {
   navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
     video.srcObject = s;
