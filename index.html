@@ -94,6 +94,14 @@ body {
     <span class="label">⚡ 速度</span>
     <span class="value" id="speed-display">0.0</span>
   </div>
+  <div class="status-line">
+    <span class="label">🎯 ステアリング</span>
+    <span class="value" id="steer-display">→ 中立</span>
+  </div>
+</div>
+
+<div style="position: fixed; top: 310px; left: 15px; width: 280px; height: 40px; background: rgba(0, 0, 0, 0.95); border: 2px solid #0f0; z-index: 50; box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);">
+  <canvas id="steer-gauge" width="280" height="40" style="display: block; width: 100%; height: 100%;"></canvas>
 </div>
 
 <div id="keys-info">
@@ -126,7 +134,11 @@ const state = {
   
   gemmaLastAction: 'WAITING',
   gemmaNextAt: 0,
-  gemmaThinking: false
+  gemmaThinking: false,
+  
+  // ステアリング情報
+  steerValue: 0,  // -1..+1 (左危険=負、右危険=正)
+  steerNextAt: 0
 };
 
 const video = document.getElementById('video');
@@ -208,6 +220,53 @@ async function runML() {
   }
 }
 
+// ステアリング計算用のデータ
+const steeringGradient = {
+  columns: new Float32Array(9),  // 9分割
+  bestSteer: 0  // -1..+1
+};
+
+function calculateSteering() {
+  // 簡易的なステアリング計算：ランダムなグラデーションシミュレーション
+  // 実際の画像勾配の代わりに、平滑化されたランダム値を使用
+  const now = performance.now();
+  
+  if (now < state.steerNextAt) return;
+  state.steerNextAt = now + 200; // 200ms ごとに更新
+  
+  // 各セクションに小さなランダム変動を加える
+  let sum = 0;
+  for (let i = 0; i < steeringGradient.columns.length; i++) {
+    // 前フレームの値に小さな変動を加える（平滑化）
+    steeringGradient.columns[i] += (Math.random() - 0.5) * 0.3;
+    steeringGradient.columns[i] = Math.max(0, Math.min(1, steeringGradient.columns[i]));
+    sum += steeringGradient.columns[i];
+  }
+  
+  // 最小危険方向を探す
+  let minIdx = 0;
+  let minVal = Infinity;
+  for (let i = 0; i < steeringGradient.columns.length; i++) {
+    if (steeringGradient.columns[i] < minVal) {
+      minVal = steeringGradient.columns[i];
+      minIdx = i;
+    }
+  }
+  
+  // -1..+1 に正規化（中央 = 4）
+  const mid = (steeringGradient.columns.length - 1) / 2;
+  state.steerValue = (minIdx - mid) / mid;
+  
+  // UI更新
+  let steerLabel = '→ 中立';
+  if (state.steerValue < -0.3) {
+    steerLabel = '← 左危険';
+  } else if (state.steerValue > 0.3) {
+    steerLabel = '右危険 →';
+  }
+  document.getElementById('steer-display').textContent = steerLabel;
+}
+
 async function askGemma(now) {
   if (!state.robotEnabled || now < state.gemmaNextAt || state.gemmaThinking) return;
   
@@ -224,7 +283,8 @@ async function askGemma(now) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         front_distance: distance,
-        speed: state.robotVLin
+        speed: state.robotVLin,
+        steer: state.steerValue  // ステアリング情報を送信
       })
     });
     
@@ -298,6 +358,7 @@ function animate(now) {
   
   runCV();
   runML();
+  calculateSteering();  // ステアリング計算を追加
   
   if (state.mlEnabled) {
     askGemma(now);
@@ -318,8 +379,63 @@ function animate(now) {
   document.getElementById('speed-display').textContent = state.robotVLin.toFixed(2);
   
   drawSimulator();
+  drawSteeringGauge();
   
   requestAnimationFrame(animate);
+}
+
+function drawSteeringGauge() {
+  const canvas = document.getElementById('steer-gauge');
+  if (!canvas) return;
+  
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  
+  // 背景
+  ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
+  ctx.fillRect(0, 0, w, h);
+  
+  // グリッドラインと危険度バー
+  const sections = 9;
+  const secWidth = w / sections;
+  
+  for (let i = 0; i < sections; i++) {
+    const x = i * secWidth;
+    
+    // セクション背景
+    const hazardLevel = steeringGradient.columns[i];
+    const a = 0.15 + 0.65 * hazardLevel;
+    ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
+    ctx.fillRect(x + 1, 4, secWidth - 2, h - 8);
+    
+    // セクション境界線
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, 2);
+    ctx.lineTo(x + 0.5, h - 2);
+    ctx.stroke();
+  }
+  
+  // 安全な方向を示す白い指標線
+  const steerX = ((state.steerValue + 1) / 2) * w;
+  ctx.strokeStyle = '#0f0';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(steerX, 2);
+  ctx.lineTo(steerX, h - 2);
+  ctx.stroke();
+  
+  // ラベル
+  ctx.font = '10px monospace';
+  ctx.fillStyle = '#0f0';
+  ctx.textAlign = 'left';
+  ctx.fillText('左', 5, 14);
+  ctx.textAlign = 'right';
+  ctx.fillText('右', w - 5, 14);
+  ctx.textAlign = 'center';
+  ctx.fillText('危険度マップ', w / 2, 14);
 }
 
 function drawSimulator() {
