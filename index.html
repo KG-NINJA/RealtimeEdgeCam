@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>A-1 Robot Vision - Smooth Control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <style>
 * { box-sizing: border-box; }
 body { 
@@ -12,23 +13,161 @@ body {
   font-family: 'Courier New', monospace; 
   font-size: 14px; 
   overflow: hidden; 
-  width: 100vw; height: 100vh; 
+  width: 100vw; height: 100vh;
+  touch-action: manipulation;
 }
-#camera-feed { 
-  position: absolute; top: 0; left: 0; 
-  width: 100%; height: 100%; 
-  z-index: 1; 
+
+/* PC / タブレット */
+@media (min-width: 768px) {
+  #camera-feed { 
+    position: absolute; top: 0; left: 0; 
+    width: 100%; height: 100%; 
+    z-index: 1; 
+  }
+  #cv { display: block; width: 100%; height: 100%; }
+  
+  #ui { 
+    position: fixed; top: 15px; left: 15px; 
+    background: rgba(0, 0, 0, 0.95); 
+    padding: 15px; 
+    border: 2px solid #0f0; 
+    z-index: 100;
+    min-width: 280px;
+    max-height: 500px;
+    overflow-y: auto;
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+  }
+  
+  .robot-sim { 
+    position: fixed; 
+    bottom: 15px; right: 15px; 
+    border: 3px solid #0f0; 
+    background: rgba(0, 15, 0, 0.95); 
+    z-index: 50;
+    width: 280px;
+    height: 280px;
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+  }
+  
+  #steer-gauge {
+    position: fixed;
+    top: 310px;
+    left: 15px;
+    width: 280px;
+    height: 40px;
+    z-index: 50;
+  }
+  
+  #keys-info {
+    position: fixed;
+    bottom: 15px;
+    left: 15px;
+    background: rgba(0, 0, 0, 0.95);
+    border: 2px solid #0f0;
+    padding: 10px;
+    font-size: 11px;
+    z-index: 49;
+    max-width: 280px;
+    display: block;
+  }
 }
-#cv { display: block; width: 100%; height: 100%; }
-#ui { 
-  position: fixed; top: 15px; left: 15px; 
-  background: rgba(0, 0, 0, 0.95); 
-  padding: 15px; 
-  border: 2px solid #0f0; 
-  z-index: 100;
-  min-width: 280px;
-  box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+
+/* スマートフォン */
+@media (max-width: 767px) {
+  body { font-size: 12px; }
+  
+  #camera-feed { 
+    position: absolute; top: 0; left: 0; 
+    width: 100%; height: 60%; 
+    z-index: 1; 
+  }
+  #cv { display: block; width: 100%; height: 100%; }
+  
+  #ui { 
+    position: fixed; 
+    top: 60%; left: 0; right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.98); 
+    padding: 10px; 
+    border-top: 2px solid #0f0;
+    z-index: 100;
+    overflow-y: auto;
+    max-height: 40vh;
+  }
+  
+  .status-line { 
+    margin: 4px 0; 
+    padding: 3px 0;
+    font-size: 12px;
+  }
+  
+  .value { 
+    min-width: 60px;
+    font-size: 12px;
+  }
+  
+  .robot-sim { 
+    position: fixed; 
+    top: 60%; right: 0;
+    width: 160px;
+    height: 160px;
+    border: 2px solid #0f0; 
+    background: rgba(0, 15, 0, 0.95); 
+    z-index: 50;
+    box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+  }
+  
+  #steer-gauge {
+    position: fixed;
+    top: 60%;
+    left: 0;
+    right: 160px;
+    height: 60px;
+    z-index: 50;
+  }
+  
+  #keys-info {
+    display: none; /* スマホでは非表示 */
+  }
+  
+  /* タッチボタン */
+  #touch-controls {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: rgba(0, 0, 0, 0.95);
+    border-top: 1px solid #0f0;
+    display: flex;
+    z-index: 101;
+  }
+  
+  .touch-btn {
+    flex: 1;
+    border: 1px solid #0f0;
+    background: rgba(0, 30, 0, 0.8);
+    color: #0f0;
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    transition: all 0.1s;
+  }
+  
+  .touch-btn:active {
+    background: rgba(0, 255, 0, 0.3);
+    box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.5);
+  }
+  
+  .touch-btn:hover {
+    background: rgba(0, 50, 0, 0.9);
+  }
 }
+
 .status-line { 
   margin: 8px 0; 
   padding: 5px 0;
@@ -41,29 +180,9 @@ body {
 .value { 
   font-weight: bold; 
   padding: 0 8px;
-  min-width: 80px;
   text-align: right;
 }
-.robot-sim { 
-  position: fixed; 
-  bottom: 15px; right: 15px; 
-  border: 3px solid #0f0; 
-  background: rgba(0, 15, 0, 0.95); 
-  z-index: 50;
-  box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
-}
 #video { position: fixed; left: -10000px; opacity: 0; }
-#keys-info {
-  position: fixed;
-  bottom: 15px;
-  left: 15px;
-  background: rgba(0, 0, 0, 0.95);
-  border: 2px solid #0f0;
-  padding: 10px;
-  font-size: 12px;
-  z-index: 50;
-  box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
-}
 </style>
 </head>
 <body>
@@ -112,6 +231,14 @@ body {
 
 <canvas id="robot-sim" class="robot-sim" width="280" height="280"></canvas>
 <video id="video" autoplay playsinline muted></video>
+
+<!-- スマートフォン用タッチコントロール -->
+<div id="touch-controls">
+  <button class="touch-btn" id="btn-ai">🧠 AI</button>
+  <button class="touch-btn" id="btn-robot">🤖 動作</button>
+  <button class="touch-btn" id="btn-camera">📹</button>
+  <button class="touch-btn" id="btn-info">ℹ️</button>
+</div>
 
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 
