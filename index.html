@@ -302,21 +302,22 @@ async function askGemma(now) {
       const d = JSON.parse(match[0]);
       console.log("Parsed JSON:", d);
       
-      state.gemmaLastAction = (d.action || 'STOP').toUpperCase();
-      document.getElementById('last-decision').textContent = state.gemmaLastAction;
+      state.gemmaLastAction = (d.action || 'stop').toLowerCase();
+      const displayAction = state.gemmaLastAction.toUpperCase().replace('_', ' ');
+      document.getElementById('last-decision').textContent = displayAction;
       document.getElementById('gemma-status').textContent = '完了 ✓';
       
       console.log("Gemma Action:", state.gemmaLastAction);
       
-      if (state.gemmaLastAction.includes('FORWARD')) {
+      if (state.gemmaLastAction === 'move_forward' || state.gemmaLastAction.includes('forward')) {
         state.targetVLin = 0.8;
         state.targetVAng = 0;
         console.log("→ FORWARD");
-      } else if (state.gemmaLastAction.includes('LEFT') || state.gemmaLastAction.includes('turn_left')) {
+      } else if (state.gemmaLastAction === 'turn_left') {
         state.targetVLin = 0.3;
         state.targetVAng = 2.0; // 左回転
         console.log("→ LEFT");
-      } else if (state.gemmaLastAction.includes('RIGHT') || state.gemmaLastAction.includes('turn_right')) {
+      } else if (state.gemmaLastAction === 'turn_right') {
         state.targetVLin = 0.3;
         state.targetVAng = -2.0; // 右回転
         console.log("→ RIGHT");
