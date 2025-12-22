@@ -125,14 +125,14 @@ body {
     top: 60%;
     left: 0;
     right: 160px;
-    height: 40px;
+    height: 30px;
     z-index: 50;
     border: 2px solid #0f0;
     background: rgba(0, 0, 0, 0.95);
   }
   
   #keys-info {
-    display: none; /* スマホでは非表示 */
+    display: none;
   }
   
   /* タッチボタン */
@@ -224,7 +224,7 @@ body {
   </div>
 </div>
 
-<canvas id="steer-gauge"></canvas>
+<canvas id="steer-gauge" width="280" height="30"></canvas>
 
 <div id="keys-info">
   <div style="font-weight: bold; margin-bottom: 5px;">操作キー</div>
@@ -266,8 +266,7 @@ const state = {
   gemmaNextAt: 0,
   gemmaThinking: false,
   
-  // ステアリング情報
-  steerValue: 0,  // -1..+1 (左危険=負、右危険=正)
+  steerValue: 0,
   steerNextAt: 0
 };
 
@@ -350,30 +349,24 @@ async function runML() {
   }
 }
 
-// ステアリング計算用のデータ
 const steeringGradient = {
-  columns: new Float32Array(9),  // 9分割
-  bestSteer: 0  // -1..+1
+  columns: new Float32Array(9),
+  bestSteer: 0
 };
 
 function calculateSteering() {
-  // 簡易的なステアリング計算：ランダムなグラデーションシミュレーション
-  // 実際の画像勾配の代わりに、平滑化されたランダム値を使用
   const now = performance.now();
   
   if (now < state.steerNextAt) return;
-  state.steerNextAt = now + 200; // 200ms ごとに更新
+  state.steerNextAt = now + 200;
   
-  // 各セクションに小さなランダム変動を加える
   let sum = 0;
   for (let i = 0; i < steeringGradient.columns.length; i++) {
-    // 前フレームの値に小さな変動を加える（平滑化）
     steeringGradient.columns[i] += (Math.random() - 0.5) * 0.3;
     steeringGradient.columns[i] = Math.max(0, Math.min(1, steeringGradient.columns[i]));
     sum += steeringGradient.columns[i];
   }
   
-  // 最小危険方向を探す
   let minIdx = 0;
   let minVal = Infinity;
   for (let i = 0; i < steeringGradient.columns.length; i++) {
@@ -383,11 +376,9 @@ function calculateSteering() {
     }
   }
   
-  // -1..+1 に正規化（中央 = 4）
   const mid = (steeringGradient.columns.length - 1) / 2;
   state.steerValue = (minIdx - mid) / mid;
   
-  // UI更新
   let steerLabel = '→ 中立';
   if (state.steerValue < -0.3) {
     steerLabel = '← 左危険';
@@ -414,7 +405,7 @@ async function askGemma(now) {
       body: JSON.stringify({
         front_distance: distance,
         speed: state.robotVLin,
-        steer: state.steerValue  // ステアリング情報を送信
+        steer: state.steerValue
       })
     });
     
@@ -432,7 +423,6 @@ async function askGemma(now) {
       }
     }
     
-    // APIが無効な応答の場合、距離ベースのフォールバック
     if (!action) {
       console.warn("⚠️ API invalid, using fallback logic");
       if (distance < 30) {
@@ -450,18 +440,17 @@ async function askGemma(now) {
     document.getElementById('last-decision').textContent = state.gemmaLastAction;
     document.getElementById('gemma-status').textContent = '完了 ✓';
     
-    // アクションに基づいて目標速度を設定
     if (action === 'move_forward') {
       state.targetVLin = 0.8;
       state.targetVAng = 0;
       console.log("→ FORWARD");
     } else if (action === 'turn_left') {
       state.targetVLin = 0.3;
-      state.targetVAng = -2.0;  // 左回転
+      state.targetVAng = -2.0;
       console.log("→ LEFT");
     } else if (action === 'turn_right') {
       state.targetVLin = 0.3;
-      state.targetVAng = 2.0;   // 右回転
+      state.targetVAng = 2.0;
       console.log("→ RIGHT");
     } else {
       state.targetVLin = 0;
@@ -488,7 +477,7 @@ function animate(now) {
   
   runCV();
   runML();
-  calculateSteering();  // ステアリング計算を追加
+  calculateSteering();
   
   if (state.mlEnabled) {
     askGemma(now);
@@ -522,24 +511,20 @@ function drawSteeringGauge() {
   const w = canvas.width;
   const h = canvas.height;
   
-  // 背景
   ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
   ctx.fillRect(0, 0, w, h);
   
-  // グリッドラインと危険度バー
   const sections = 9;
   const secWidth = w / sections;
   
   for (let i = 0; i < sections; i++) {
     const x = i * secWidth;
     
-    // セクション背景
     const hazardLevel = steeringGradient.columns[i];
     const a = 0.15 + 0.65 * hazardLevel;
     ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
     ctx.fillRect(x + 1, 4, secWidth - 2, h - 8);
     
-    // セクション境界線
     ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -548,7 +533,6 @@ function drawSteeringGauge() {
     ctx.stroke();
   }
   
-  // 安全な方向を示す白い指標線
   const steerX = ((state.steerValue + 1) / 2) * w;
   ctx.strokeStyle = '#0f0';
   ctx.lineWidth = 2;
@@ -557,7 +541,6 @@ function drawSteeringGauge() {
   ctx.lineTo(steerX, h - 2);
   ctx.stroke();
   
-  // ラベル
   ctx.font = '9px monospace';
   ctx.fillStyle = '#0f0';
   ctx.textAlign = 'left';
@@ -665,7 +648,6 @@ window.addEventListener('keydown', e => {
   }
 });
 
-// スマートフォン用タッチコントロール
 document.getElementById('btn-ai')?.addEventListener('click', () => {
   state.mlEnabled = !state.mlEnabled;
   if (state.mlEnabled) {
@@ -706,7 +688,6 @@ cv['onRuntimeInitialized'] = () => {
     video.srcObject = s;
     video.play();
     
-    // iPhone SE などの小さい画面に対応
     adjustSimulatorSize();
     
     requestAnimationFrame(animate);
@@ -722,15 +703,12 @@ function adjustSimulatorSize() {
   if (!simCanvas) return;
   
   if (isMobile) {
-    // スマートフォン対応
     const screenWidth = window.innerWidth;
     const screenHeight = window.innerHeight;
     
-    // カメラ: 60%, UI: 25%, ボタン: 15%
     const availableHeight = screenHeight * 0.25;
     const availableWidth = screenWidth;
     
-    // 正方形を維持しながら、利用可能スペースに収める
     const maxSize = Math.min(availableWidth * 0.4, availableHeight * 0.9);
     
     simCanvas.width = Math.floor(maxSize);
@@ -740,16 +718,27 @@ function adjustSimulatorSize() {
     
     if (steerGauge) {
       steerGauge.width = screenWidth - maxSize - 4;
-      steerGauge.height = 40;
+      steerGauge.height = 30;
     }
     
     console.log(`Simulator size: ${maxSize}px (Mobile)`);
   } else {
-    // PC/タブレット対応
     simCanvas.width = 280;
     simCanvas.height = 280;
     simCanvas.style.width = '280px';
     simCanvas.style.height = '280px';
     
     if (steerGauge) {
-      st
+      steerGauge.width = 280;
+      steerGauge.height = 30;
+    }
+  }
+}
+
+window.addEventListener('resize', () => {
+  adjustSimulatorSize();
+});
+</script>
+
+</body>
+</html>
