@@ -295,39 +295,59 @@ async function askGemma(now) {
     const json = await res.json();
     console.log("API Response:", json);
     
-    const match = json.data[0].match(/\{.*\}/s);
-    console.log("Match result:", match);
+    let d = null;
     
-    if (match) {
-      const d = JSON.parse(match[0]);
-      console.log("Parsed JSON:", d);
+    // APIレスポンスをパース
+    if (json.data && json.data[0]) {
+      const match = json.data[0].match(/\{.*\}/s);
+      console.log("Match result:", match);
       
-      state.gemmaLastAction = (d.action || 'stop').toLowerCase();
-      const displayAction = state.gemmaLastAction.toUpperCase().replace('_', ' ');
-      document.getElementById('last-decision').textContent = displayAction;
-      document.getElementById('gemma-status').textContent = '完了 ✓';
-      
-      console.log("Gemma Action:", state.gemmaLastAction);
-      
-      if (state.gemmaLastAction === 'move_forward' || state.gemmaLastAction.includes('forward')) {
-        state.targetVLin = 0.8;
-        state.targetVAng = 0;
-        console.log("→ FORWARD");
-      } else if (state.gemmaLastAction === 'turn_left') {
-        state.targetVLin = 0.3;
-        state.targetVAng = -2.0; // 左回転（符号反転）
-        console.log("→ LEFT");
-      } else if (state.gemmaLastAction === 'turn_right') {
-        state.targetVLin = 0.3;
-        state.targetVAng = 2.0; // 右回転（符号反転）
-        console.log("→ RIGHT");
-      } else {
-        state.targetVLin = 0;
-        state.targetVAng = 0;
-        console.log("→ STOP");
+      if (match) {
+        d = JSON.parse(match[0]);
+        console.log("Parsed JSON:", d);
       }
+    }
+    
+    // APIが正常に応答しない場合は距離ベースの簡易ロジックを使用
+    if (!d || !d.action) {
+      console.warn("⚠️ API response invalid, using distance-based logic");
+      if (distance < 30) {
+        // 近い: 回避行動
+        d = { action: Math.random() > 0.5 ? 'turn_left' : 'turn_right' };
+      } else if (distance < 60) {
+        // 中程度: ランダム
+        const actions = ['move_forward', 'turn_left', 'turn_right'];
+        d = { action: actions[Math.floor(Math.random() * 3)] };
+      } else {
+        // 遠い: 前進
+        d = { action: 'move_forward' };
+      }
+      console.log("Fallback action:", d.action);
+    }
+    
+    state.gemmaLastAction = (d.action || 'stop').toLowerCase();
+    const displayAction = state.gemmaLastAction.toUpperCase().replace('_', ' ');
+    document.getElementById('last-decision').textContent = displayAction;
+    document.getElementById('gemma-status').textContent = '完了 ✓';
+    
+    console.log("Gemma Action:", state.gemmaLastAction);
+    
+    if (state.gemmaLastAction === 'move_forward' || state.gemmaLastAction.includes('forward')) {
+      state.targetVLin = 0.8;
+      state.targetVAng = 0;
+      console.log("→ FORWARD");
+    } else if (state.gemmaLastAction === 'turn_left') {
+      state.targetVLin = 0.3;
+      state.targetVAng = -2.0; // 左回転
+      console.log("→ LEFT");
+    } else if (state.gemmaLastAction === 'turn_right') {
+      state.targetVLin = 0.3;
+      state.targetVAng = 2.0; // 右回転
+      console.log("→ RIGHT");
     } else {
-      console.warn("No JSON match found in API response");
+      state.targetVLin = 0;
+      state.targetVAng = 0;
+      console.log("→ STOP");
     }
   } catch (e) {
     console.error("Gemma API Error:", e);
