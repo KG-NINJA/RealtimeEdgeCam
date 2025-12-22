@@ -664,6 +664,42 @@ window.addEventListener('keydown', e => {
   }
 });
 
+// スマートフォン用タッチコントロール
+document.getElementById('btn-ai')?.addEventListener('click', () => {
+  state.mlEnabled = !state.mlEnabled;
+  if (state.mlEnabled) {
+    loadML();
+    document.getElementById('gemma-status').textContent = '読み込み中...';
+  } else {
+    document.getElementById('gemma-status').textContent = '無効';
+  }
+});
+
+document.getElementById('btn-robot')?.addEventListener('click', () => {
+  state.robotEnabled = !state.robotEnabled;
+  const modeEl = document.getElementById('robot-mode');
+  modeEl.textContent = state.robotEnabled ? '稼働中' : '停止中';
+  modeEl.style.color = state.robotEnabled ? '#0f0' : '#f00';
+  
+  if (!state.robotEnabled) {
+    state.targetVLin = 0;
+    state.targetVAng = 0;
+    state.robotVLin = 0;
+    state.robotVAng = 0;
+  }
+});
+
+document.getElementById('btn-camera')?.addEventListener('click', () => {
+  state.debugEdges = !state.debugEdges;
+});
+
+let showInfo = false;
+document.getElementById('btn-info')?.addEventListener('click', () => {
+  showInfo = !showInfo;
+  const ui = document.getElementById('ui');
+  ui.style.display = showInfo ? 'block' : 'block';
+});
+
 cv['onRuntimeInitialized'] = () => {
   navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
     video.srcObject = s;
