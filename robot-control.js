@@ -9,25 +9,28 @@
     x: SIM_SIZE / 2, y: SIM_SIZE / 2,
     theta: 0, vLin: 0, vAng: 0,
     lastDecisionAt: 0, isThinking: false,
-    // --- 画面表示用の変数 ---
-    lastActionText: "STANDBY", 
+    lastActionText: "STANDBY",
     lastDistText: "---",
-    statusColor: "#00FF00" 
+    statusColor: "#00FF00"
   };
 
-  var simCanvas = null, simCtx = null;
+  var simCanvas = null, simCtx = null, hudDiv = null;
 
-  function ensureCanvas() {
+  // 🤖 画面上に直接テキストを表示するための要素を作成
+  function ensureElements() {
     if (simCanvas) return;
+    
+    // Canvasの作成
     simCanvas = document.createElement('canvas');
     simCanvas.width = SIM_SIZE; simCanvas.height = SIM_SIZE;
-    simCanvas.style.position = 'fixed';
-    simCanvas.style.bottom = '10px'; simCanvas.style.right = '10px';
-    simCanvas.style.border = '2px solid #0f0';
-    simCanvas.style.background = 'rgba(0, 10, 0, 0.9)'; // 背景を濃くして文字を見やすく
-    simCanvas.style.zIndex = '10000'; // 最前面に
+    simCanvas.style.cssText = 'position:fixed !important; bottom:10px; right:10px; border:2px solid #0f0; background:rgba(0,10,0,0.8); z-index:999999; pointer-events:none;';
     document.body.appendChild(simCanvas);
     simCtx = simCanvas.getContext('2d');
+
+    // HUDテキスト（Canvas外の表示）の作成
+    hudDiv = document.createElement('div');
+    hudDiv.style.cssText = 'position:fixed !important; bottom:420px; right:10px; color:#0f0; font-family:monospace; font-size:18px; font-weight:bold; background:rgba(0,0,0,0.7); padding:10px; border-radius:5px; z-index:999999; white-space:pre; border-left:5px solid #0f0;';
+    document.body.appendChild(hudDiv);
   }
 
   async function askGemmaDecision() {
@@ -55,29 +58,36 @@
       
       if (match) {
         const data = JSON.parse(match[0]);
-        // 🤖 判断結果を画面用に保存
         robot.lastActionText = data.action.toUpperCase();
         
         if (data.action.includes("forward")) {
           robot.vLin = 0.8; robot.vAng = 0;
-          robot.statusColor = "#00FF00"; // 進める時は緑
+          robot.statusColor = "#00FF00";
         } else {
           robot.vLin = 0.1; robot.vAng = 1.8;
-          robot.statusColor = "#FF00FF"; // 回避中はマゼンタ（目立つ色）
+          robot.statusColor = "#FF00FF";
         }
       }
     } catch (e) {
       robot.lastActionText = "API ERROR";
-      robot.statusColor = "#FF0000"; // エラーは赤
+      robot.statusColor = "#FF0000";
     } finally {
       robot.isThinking = false;
     }
   }
 
-  function updateRobotControl(now) {
-    if (!robot.controlEnabled) return;
-    ensureCanvas();
+  function update() {
+    if (!robot.controlEnabled) {
+      if(simCanvas) { simCanvas.style.display = 'none'; hudDiv.style.display = 'none'; }
+      requestAnimationFrame(update);
+      return;
+    }
 
+    ensureElements();
+    simCanvas.style.display = 'block';
+    hudDiv.style.display = 'block';
+
+    const now = performance.now();
     if (now - robot.lastDecisionAt > 1200) {
       askGemmaDecision();
       robot.lastDecisionAt = now;
@@ -92,22 +102,13 @@
     if (robot.x < 0) robot.x = SIM_SIZE; if (robot.x > SIM_SIZE) robot.x = 0;
     if (robot.y < 0) robot.y = SIM_SIZE; if (robot.y > SIM_SIZE) robot.y = 0;
 
-    // --- 描画開始 ---
-    simCtx.clearRect(0, 0, SIM_SIZE, SIM_SIZE);
-    
-    // 🤖 テキスト情報の描画（ここが重要）
-    simCtx.fillStyle = robot.statusColor;
-    simCtx.font = "bold 20px 'Courier New', monospace"; // 少し大きく
-    simCtx.fillText("▶ SENSOR: " + robot.lastDistText, 20, 40);
-    simCtx.fillText("▶ AI    : " + robot.lastActionText, 20, 70);
-    
-    if (robot.isThinking) {
-      simCtx.fillStyle = "#FFFF00";
-      simCtx.font = "14px monospace";
-      simCtx.fillText("Gemma is thinking...", 20, 100);
-    }
+    // 🤖 HUD（テキスト）の更新
+    hudDiv.style.borderColor = robot.statusColor;
+    hudDiv.style.color = robot.statusColor;
+    hudDiv.textContent = `[ GEMMA AI STATUS ]\nDIST: ${robot.lastDistText}\nDECISION: ${robot.lastActionText}\nTHINKING: ${robot.isThinking ? "YES" : "NO"}`;
 
-    // ロボット描画
+    // 🤖 Canvas描画
+    simCtx.clearRect(0, 0, SIM_SIZE, SIM_SIZE);
     simCtx.save();
     simCtx.translate(robot.x, robot.y);
     simCtx.rotate(robot.theta);
@@ -118,14 +119,20 @@
     simCtx.moveTo(0,0); simCtx.lineTo(20,0);
     simCtx.stroke();
     simCtx.restore();
+
+    requestAnimationFrame(update);
   }
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyR') {
       robot.controlEnabled = !robot.controlEnabled;
-      if (simCanvas) simCanvas.style.display = robot.controlEnabled ? 'block' : 'none';
+      console.log("R Pressed: Control is " + robot.controlEnabled);
     }
   });
 
-  window.updateRobotControl = updateRobotControl;
+  // 実行開始
+  requestAnimationFrame(update);
+
+  // メインシステム用のインターフェース（互換性のため）
+  window.updateRobotControl = function(){}; 
 })();
