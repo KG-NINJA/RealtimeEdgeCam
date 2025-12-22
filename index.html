@@ -2,104 +2,52 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>A-1 Robot Vision – Poodle Mood</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A-1 Poodle Robot – Steering + Edge</title>
 
 <style>
-* { box-sizing: border-box; }
-body {
-  margin:0;
-  background:#000;
-  color:#0f0;
-  font-family: "Courier New", monospace;
-  overflow:hidden;
-}
-
-/* UI */
+body { margin:0; background:#000; color:#0f0; font-family:monospace; overflow:hidden; }
 #ui {
-  position:fixed;
-  top:15px; left:15px;
-  background:rgba(0,0,0,0.95);
+  position:fixed; top:10px; left:10px;
+  background:rgba(0,0,0,0.9);
   border:2px solid #0f0;
-  padding:12px;
+  padding:10px;
   z-index:100;
   min-width:260px;
-  box-shadow:0 0 20px rgba(0,255,0,0.3);
 }
-.status-line {
-  display:flex;
-  justify-content:space-between;
-  margin:6px 0;
-  border-bottom:1px solid #033;
-  padding-bottom:4px;
-}
-.value { font-weight:bold; }
-
-#robot-sim {
-  position:fixed;
-  right:15px; bottom:15px;
-  width:260px; height:260px;
-  border:3px solid #0f0;
-  background:rgba(0,15,0,0.95);
-  box-shadow:0 0 20px rgba(0,255,0,0.3);
-}
-
-#video { position:fixed; left:-9999px; }
-#cv {
-  position:absolute;
-  inset:0;
-  width:100vw;
-  height:100vh;
-  image-rendering:pixelated;
-}
+.line { display:flex; justify-content:space-between; margin:4px 0; }
+canvas { position:absolute; inset:0; width:100vw; height:100vh; }
+video { position:fixed; left:-9999px; }
 </style>
 </head>
 
 <body>
 
-<canvas id="cv"></canvas>
+<canvas id="view"></canvas>
 
 <div id="ui">
-  <b>🐩 A-1 ROBOT VISION</b>
-  <div class="status-line"><span>距離</span><span id="obs-score" class="value">100</span></div>
-  <div class="status-line"><span>Gemma</span><span id="gemma-status" class="value">待機</span></div>
-  <div class="status-line"><span>動作</span><span id="robot-mode" class="value" style="color:#f00">停止</span></div>
-  <div class="status-line"><span>判断</span><span id="last-decision" class="value">-</span></div>
-  <div class="status-line"><span>感情</span><span id="emotion-display" class="value">🐩 うれしい！</span></div>
+  <b>🐩 A-1 POODLE ROBOT</b>
+  <div class="line"><span>Edge距離</span><span id="dist">100</span></div>
+  <div class="line"><span>速度 v</span><span id="vlin">0.0</span></div>
+  <div class="line"><span>角速度 ω</span><span id="vang">0.0</span></div>
+  <div class="line"><span>感情</span><span id="emotion">🐩 うれしい！</span></div>
 </div>
 
-<canvas id="robot-sim"></canvas>
 <video id="video" autoplay playsinline muted></video>
 
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
 
 <script>
-/* =====================
+/* ======================
    STATE
-===================== */
+====================== */
 const state = {
-  cvReady:false,
-  mlReady:false,
-  mlEnabled:false,
-  mlInFlight:false,
-  lastObstacleScore:100,
+  lastObstacleScore: 100,
+  robotVLin: 0,
+  robotVAng: 0,
+  targetVLin: 0,
+  targetVAng: 0,
 
-  robotEnabled:false,
-  robotX:130,
-  robotY:130,
-  robotTheta:0,
-  robotVLin:0,
-  robotVAng:0,
-  targetVLin:0,
-  targetVAng:0,
-
-  gemmaThinking:false,
-  gemmaNextAt:0,
-
-  /* 🐩 感情モデル */
-  emotionCore:'happy',
   emotionBase:'happy',
   emotionOverlay:null,
   emotionOverlayUntil:0,
@@ -109,152 +57,131 @@ const state = {
 };
 
 const video = document.getElementById("video");
-const cvCanvas = document.getElementById("cv");
-const cvCtx = cvCanvas.getContext("2d");
+const canvas = document.getElementById("view");
+const ctx = canvas.getContext("2d");
+canvas.width = innerWidth;
+canvas.height = innerHeight;
 
-cvCanvas.width = innerWidth;
-cvCanvas.height = innerHeight;
-
-/* =====================
+/* ======================
    CAMERA
-===================== */
-navigator.mediaDevices.getUserMedia({video:true}).then(s=>{
-  video.srcObject=s;
-  video.play();
-});
+====================== */
+navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})
+  .then(s => { video.srcObject = s; });
 
-/* =====================
-   ML
-===================== */
-let model=null;
-async function loadML(){
-  if(model) return;
-  model = await cocoSsd.load();
-  state.mlReady=true;
-  document.getElementById("gemma-status").textContent="準備完了";
-}
-async function runML(){
-  if(!state.mlEnabled || !state.mlReady || state.mlInFlight) return;
-  state.mlInFlight=true;
-  const preds = await model.detect(video);
-  if(preds.length){
-    state.lastObstacleScore=Math.round(preds[0].score*100);
-  } else {
-    state.lastObstacleScore=100;
+/* ======================
+   EDGE DETECTION
+====================== */
+let src, gray, edges;
+
+function processEdge() {
+  if (!cv || video.readyState < 2) return;
+
+  if (!src) {
+    src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+    gray = new cv.Mat();
+    edges = new cv.Mat();
   }
-  document.getElementById("obs-score").textContent=state.lastObstacleScore;
-  state.mlInFlight=false;
+
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  let imgData = ctx.getImageData(0,0,video.videoWidth,video.videoHeight);
+  src.data.set(imgData.data);
+
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.Canny(gray, edges, 80, 150);
+
+  // 前方中央領域のエッジ密度
+  const cx = Math.floor(edges.cols/2);
+  const w = Math.floor(edges.cols*0.2);
+  let edgeCount = 0;
+  for(let y=edges.rows*0.4;y<edges.rows*0.6;y++){
+    for(let x=cx-w;x<cx+w;x++){
+      if(edges.ucharPtr(y,x)[0]>0) edgeCount++;
+    }
+  }
+
+  state.lastObstacleScore = Math.max(0,100 - edgeCount/80);
+  document.getElementById("dist").textContent = state.lastObstacleScore.toFixed(0);
+
+  // 描画（ワイヤーフレーム風）
+  ctx.globalAlpha=0.6;
+  ctx.drawImage(edges,0,0,canvas.width,canvas.height);
+  ctx.globalAlpha=1;
 }
 
-/* =====================
-   🐩 POODLE EMOTION MODEL
-===================== */
-function updateEmotionalState(){
-  const now=performance.now();
-  if(now<state.emotionNextUpdate) return;
-  state.emotionNextUpdate=now+250;
+/* ======================
+   STEERING
+====================== */
+function updateSteering(){
+  const d = state.lastObstacleScore;
 
-  const safe = state.lastObstacleScore>60;
-  const verySafe = state.lastObstacleScore>80;
-  const moving = state.robotEnabled && state.robotVLin>0.2;
-  const fast = state.robotVLin>0.6;
-  const thinking = state.gemmaThinking || state.mlInFlight;
+  if(d < 30){
+    state.targetVLin = 0.1;
+    state.targetVAng = 0.8;   // 回避旋回
+  } else if(d < 60){
+    state.targetVLin = 0.3;
+    state.targetVAng = 0.3;
+  } else {
+    state.targetVLin = 0.6;
+    state.targetVAng = 0.0;
+  }
 
-  /* BASE */
-  if(fast && verySafe){
+  // 慣性（なつっこい動き）
+  state.robotVLin += (state.targetVLin - state.robotVLin)*0.05;
+  state.robotVAng += (state.targetVAng - state.robotVAng)*0.05;
+
+  document.getElementById("vlin").textContent = state.robotVLin.toFixed(2);
+  document.getElementById("vang").textContent = state.robotVAng.toFixed(2);
+}
+
+/* ======================
+   🐩 POODLE EMOTION
+====================== */
+function updateEmotion(){
+  const now = performance.now();
+  if(now < state.emotionNextUpdate) return;
+  state.emotionNextUpdate = now + 300;
+
+  const d = state.lastObstacleScore;
+  const fast = state.robotVLin > 0.5;
+  const safe = d > 60;
+
+  if(fast && d>80){
     state.emotionBase='excited';
-  } else if(moving && safe){
-    state.emotionBase='happy';
   } else if(safe){
-    state.emotionBase='confident';
+    state.emotionBase='happy';
   } else {
     state.emotionBase='curious';
   }
 
-  /* OVERLAY */
-  if(thinking){
-    state.emotionOverlay='curious';
-    state.emotionOverlayUntil=now+500;
-  }
-  if(state.lastObstacleScore<30){
+  if(d<30){
     state.emotionOverlay='alert';
-    state.emotionOverlayUntil=now+700;
+    state.emotionOverlayUntil=now+600;
   }
+
   if(state.emotionOverlay && now>state.emotionOverlayUntil){
     state.emotionOverlay=null;
   }
 
   state.emotionState = state.emotionOverlay || state.emotionBase;
 
-  state.emotionIntensity =
-    state.emotionState==='excited' ? Math.min(1,state.robotVLin)
-    : state.emotionState==='happy' ? 0.7
-    : state.emotionState==='confident' ? 0.5
-    : 0.6;
-
-  document.getElementById("emotion-display").textContent=getEmotionLabel();
-}
-
-function getEmotionLabel(){
-  return {
-    happy:'🐩 うれしい！',
+  document.getElementById("emotion").textContent = {
     excited:'🐩✨ たのしい！',
-    confident:'🐩 余裕〜',
+    happy:'🐩 うれしい！',
     curious:'🐩？ なになに？',
     alert:'🐩！ ちょっと待って'
-  }[state.emotionState]||'🐩';
+  }[state.emotionState];
 }
 
-/* =====================
-   SOUND
-===================== */
-function playEmotionSound(){
-  const ctx = window.audioCtx || new AudioContext();
-  window.audioCtx=ctx;
-  const map={
-    happy:[[660,80],[880,80]],
-    excited:[[880,60],[1100,60],[880,60]],
-    curious:[[520,70],[660,70]],
-    confident:[[440,120]],
-    alert:[[1200,50],[800,50]]
-  };
-  const seq = map[state.emotionState]||map.happy;
-  let t=ctx.currentTime;
-  seq.forEach(([f,d])=>{
-    const o=ctx.createOscillator();
-    const g=ctx.createGain();
-    o.frequency.value=f;
-    o.connect(g); g.connect(ctx.destination);
-    g.gain.setValueAtTime(0.15*state.emotionIntensity,t);
-    g.gain.exponentialRampToValueAtTime(0.01,t+d/1000);
-    o.start(t); o.stop(t+d/1000);
-    t+=d/1000+0.04;
-  });
-}
-
-/* =====================
+/* ======================
    LOOP
-===================== */
+====================== */
 function loop(){
-  cvCtx.drawImage(video,0,0,cvCanvas.width,cvCanvas.height);
-  runML();
-  updateEmotionalState();
-  if(performance.now()%1200<40) playEmotionSound();
+  processEdge();
+  updateSteering();
+  updateEmotion();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-
-/* =====================
-   INPUT
-===================== */
-window.addEventListener("keydown",e=>{
-  if(e.code==='KeyM'){ state.mlEnabled=!state.mlEnabled; if(state.mlEnabled) loadML(); }
-  if(e.code==='KeyR'){
-    state.robotEnabled=!state.robotEnabled;
-    document.getElementById("robot-mode").textContent=state.robotEnabled?'稼働':'停止';
-    document.getElementById("robot-mode").style.color=state.robotEnabled?'#0f0':'#f00';
-  }
-});
 </script>
 
 </body>
