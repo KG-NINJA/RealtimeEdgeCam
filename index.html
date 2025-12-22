@@ -8,112 +8,45 @@
 * { box-sizing: border-box; }
 
 body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  color: #0f0;
-  font-family: monospace;
-  font-size: 12px;
-  overflow: hidden;
-  width: 100vw;
-  height: 100vh;
+  margin: 0; padding: 0; background: #000; color: #0f0;
+  font-family: monospace; font-size: 12px; overflow: hidden;
+  width: 100vw; height: 100vh;
 }
 
-#camera-feed {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: #000;
-  z-index: 1;
-}
-
-#cv {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-#video {
-  position: fixed;
-  left: -10000px;
-  top: -10000px;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
+#camera-feed { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 1; }
+#cv { display: block; width: 100%; height: 100%; }
+#video { position: fixed; left: -10000px; top: -10000px; width: 1px; height: 1px; opacity: 0; }
 
 #ui {
-  position: fixed;
-  top: 10px;
-  left: 10px;
-  background: rgba(0,0,0,0.95);
-  padding: 12px;
-  border: 2px solid #0f0;
-  color: #0f0;
-  max-width: 420px;
-  max-height: 85vh;
-  overflow-y: auto;
-  z-index: 100;
+  position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.95);
+  padding: 12px; border: 2px solid #0f0; color: #0f0;
+  max-width: 420px; max-height: 85vh; overflow-y: auto; z-index: 100;
   box-shadow: 0 0 10px rgba(0,255,0,0.3);
 }
 
-#ui b {
-  font-size: 14px;
-}
-
-.status-line {
-  margin: 5px 0;
-  padding: 3px 0;
-  border-bottom: 1px solid #033;
-  font-size: 11px;
-}
-
+#ui b { font-size: 14px; }
+.status-line { margin: 5px 0; padding: 3px 0; border-bottom: 1px solid #033; font-size: 11px; }
 .status-good { color: #0f0; }
 .status-warn { color: #ff0; }
 .status-bad { color: #f00; }
 .status-neutral { color: #aaa; }
 
-.controls {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #033;
-  font-size: 11px;
-}
+.controls { margin-top: 10px; padding-top: 10px; border-top: 1px solid #033; font-size: 11px; }
 
 .robot-sim {
-  position: fixed;
-  bottom: 10px;
-  right: 10px;
-  border: 2px solid #0f0;
-  background: rgba(0,20,0,0.95);
-  z-index: 50;
+  position: fixed; bottom: 10px; right: 10px; border: 2px solid #0f0;
+  background: rgba(0,20,0,0.95); z-index: 50;
   box-shadow: 0 0 10px rgba(0,255,0,0.2);
 }
 
 #fps-counter {
-  position: fixed;
-  bottom: 10px;
-  left: 10px;
-  background: rgba(0,0,0,0.8);
-  padding: 5px 10px;
-  border: 1px solid #0f0;
-  color: #0f0;
-  font-size: 11px;
-  z-index: 40;
+  position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8);
+  padding: 5px 10px; border: 1px solid #0f0; color: #0f0; font-size: 11px; z-index: 40;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #111;
-}
-::-webkit-scrollbar-thumb {
-  background: #0f0;
-  border-radius: 3px;
-}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #111; }
+::-webkit-scrollbar-thumb { background: #0f0; border-radius: 3px; }
 </style>
 </head>
 <body>
@@ -162,8 +95,8 @@ body {
     <span style="color: #0f0;">D</span> = Edge Display<br>
     <span style="color: #0f0;">Space</span> = Freeze<br>
     <span style="color: #0f0;">W/A/S/D</span> = Manual<br>
-    <span style="color: #0f0;">G</span> = Ask Gemma<br>
-    <span style="color: #ff0;">T</span> = Test Gemma<br>
+    <span style="color: #0f0;">G</span> = Ask Gemma (Manual)<br>
+    <span style="color: #ff0;">T</span> = Test Gemma (Mock)<br>
   </div>
 </div>
 
@@ -180,562 +113,193 @@ body {
 <script>
 /* ==================== グローバル状態 ==================== */
 const state = {
-  cvReady: false,
-  procW: 320,
-  procH: 240,
-  videoW: 0,
-  videoH: 0,
-  frozen: false,
-  debugEdges: true,
-  
-  mlEnabled: false,
-  mlReady: false,
-  mlLoading: false,
-  mlInFlight: false,
-  mlNextAtMs: 0,
-  mlIntervalMs: 500,
-  mlMinScore: 0.5,
-  mlLastClass: '',
-  mlLastScore: 0,
-  mlLastBox: null,
-  lastObstacleScore: 0,
-  
-  robotEnabled: false,
-  robotAutoMode: true,
-  robotX: 120,
-  robotY: 120,
-  robotTheta: 0,
-  robotVLin: 0,
-  robotVAng: 0,
-  robotTrail: [],
-  
-  gemmaLastDecision: '',
-  gemmaNextAtMs: 0,
-  gemmaIntervalMs: 30000,  // 30秒間隔（1フレーム/30秒、十分少ない）
+  cvReady: false, procW: 320, procH: 240, videoW: 0, videoH: 0,
+  frozen: false, debugEdges: true, mlEnabled: false, mlReady: false,
+  mlLoading: false, mlInFlight: false, mlNextAtMs: 0, mlIntervalMs: 500,
+  mlMinScore: 0.5, mlLastClass: '', mlLastScore: 0, mlLastBox: null,
+  lastObstacleScore: 0, robotEnabled: false, robotAutoMode: true,
+  robotX: 120, robotY: 120, robotTheta: 0, robotVLin: 0, robotVAng: 0,
+  robotTrail: [], gemmaLastDecision: 'WAITING', gemmaNextAtMs: 0,
+  gemmaIntervalMs: 1500, // 自動実行時の間隔（1.5秒）
 };
 
-const ML_ALLOWED = new Set([
-  'chair', 'couch', 'bed', 'dining table', 'tv', 'laptop', 'keyboard', 'mouse',
-  'refrigerator', 'microwave', 'oven', 'sink', 'toilet', 'potted plant',
-  'bottle', 'cup', 'backpack', 'suitcase', 'book', 'vase',
-  'dog', 'cat', 'bird', 'horse', 'cow', 'elephant', 'bear', 'person'
-]);
+const ML_ALLOWED = new Set(['chair', 'couch', 'bed', 'dining table', 'tv', 'laptop', 'person', 'dog', 'cat']);
 
-/* ==================== DOM要素 ==================== */
 const video = document.getElementById('video');
 const cvCanvas = document.getElementById('cv');
 
-/* ==================== UI更新 ==================== */
 function updateStatus(id, text, className) {
   const el = document.getElementById(id);
-  if (el) {
-    el.textContent = text;
-    el.className = 'status-' + className;
-  }
+  if (el) { el.textContent = text; el.className = 'status-' + className; }
 }
 
-/* ==================== カメラ初期化 ==================== */
+/* ==================== カメラ・OpenCV初期化 ==================== */
 async function initCamera() {
   try {
-    const constraints = {
-      audio: false,
-      video: {
-        facingMode: { ideal: 'environment' },
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-      },
-    };
-
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: 640, height: 480 } });
     video.srcObject = stream;
-    
-    return new Promise((resolve) => {
-      video.onloadedmetadata = () => {
-        video.play().catch(e => console.error('Play error:', e));
-        updateStatus('camera-status', 'Ready (' + video.videoWidth + 'x' + video.videoHeight + ')', 'good');
-        resolve();
-      };
-    });
-  } catch (err) {
-    console.error('Camera error:', err);
-    updateStatus('camera-status', 'Error: ' + err.name, 'bad');
-    throw err;
-  }
+    return new Promise(r => video.onloadedmetadata = () => { video.play(); r(); });
+  } catch (e) { updateStatus('camera-status', 'Error', 'bad'); }
 }
 
-/* ==================== OpenCV初期化 ==================== */
-let procRGBA = null;
-let gray = null;
-let blur = null;
-let edges = null;
-let blurKSize = null;
-let dilateKernel = null;
-let lastVideoW = 0;
-let lastVideoH = 0;
-
-function cleanupMatrices() {
-  if (procRGBA) { procRGBA.delete(); procRGBA = null; }
-  if (gray) { gray.delete(); gray = null; }
-  if (blur) { blur.delete(); blur = null; }
-  if (edges) { edges.delete(); edges = null; }
-}
-
+let procRGBA, gray, blur, edges, blurKSize, dilateKernel;
 function initOpenCV() {
-  if (!cv || !cv.Mat) return;
-  if (video.videoWidth === 0) return;
-
-  if (lastVideoW === video.videoWidth && lastVideoH === video.videoHeight && state.cvReady) {
-    return;
-  }
-
-  try {
-    cleanupMatrices();
-
-    lastVideoW = video.videoWidth;
-    lastVideoH = video.videoHeight;
-    state.videoW = video.videoWidth;
-    state.videoH = video.videoHeight;
-
-    const aspect = state.videoW / state.videoH;
-    state.procW = 320;
-    state.procH = Math.floor(320 / aspect);
-
-    cvCanvas.width = state.procW;
-    cvCanvas.height = state.procH;
-
-    procRGBA = new cv.Mat(state.procH, state.procW, cv.CV_8UC4);
-    gray = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
-    blur = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
-    edges = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
-    
-    if (!blurKSize) blurKSize = new cv.Size(5, 5);
-    if (!dilateKernel) dilateKernel = cv.Mat.ones(3, 3, cv.CV_8U);
-
-    state.cvReady = true;
-    updateStatus('camera-status', 'OpenCV Ready', 'good');
-    console.log('OpenCV initialized');
-  } catch (e) {
-    console.error('OpenCV init error:', e);
-    state.cvReady = false;
-    updateStatus('camera-status', 'Error', 'bad');
-  }
+  if (!cv.Mat || video.videoWidth === 0) return;
+  state.videoW = video.videoWidth; state.videoH = video.videoHeight;
+  state.procH = Math.floor(320 / (state.videoW/state.videoH));
+  cvCanvas.width = 320; cvCanvas.height = state.procH;
+  procRGBA = new cv.Mat(state.procH, 320, cv.CV_8UC4);
+  gray = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
+  blur = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
+  edges = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
+  blurKSize = new cv.Size(5, 5); dilateKernel = cv.Mat.ones(3, 3, cv.CV_8U);
+  state.cvReady = true;
+  updateStatus('camera-status', 'Ready', 'good');
 }
 
-/* ==================== CV処理（Canvas経由） ==================== */
+/* ==================== CV/ML 実行ループ ==================== */
 const captureCanvas = document.createElement('canvas');
 let captureCtx = null;
 
 function runCvOnce() {
   if (!state.cvReady || state.frozen) return;
-  if (video.readyState !== 4) return;
-
-  try {
-    if (video.videoWidth !== lastVideoW || video.videoHeight !== lastVideoH) {
-      state.cvReady = false;
-      initOpenCV();
-      return;
-    }
-
-    if (!procRGBA) return;
-
-    captureCanvas.width = video.videoWidth;
-    captureCanvas.height = video.videoHeight;
-    
-    if (!captureCtx) {
-      captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
-    }
-
-    captureCtx.drawImage(video, 0, 0);
-    const imageData = captureCtx.getImageData(0, 0, video.videoWidth, video.videoHeight);
-
-    let src = cv.matFromImageData(imageData);
-    
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, blur, blurKSize, 1.1, 1.1, cv.BORDER_DEFAULT);
-    cv.equalizeHist(blur, gray);
-    cv.Canny(gray, edges, 35, 95);
-    cv.dilate(edges, edges, dilateKernel);
-
-    cv.resize(edges, procRGBA, new cv.Size(state.procW, state.procH), 0, 0, cv.INTER_AREA);
-
-    if (state.debugEdges) {
-      cv.imshow(cvCanvas, procRGBA);
-      drawMlOverlay();
-    }
-
-    const nz = cv.countNonZero(edges);
-    updateStatus('edge-status', nz + ' pixels', nz > 100 ? 'good' : 'warn');
-
-    src.delete();
-  } catch (e) {
-    console.error('CV error:', e);
-    state.cvReady = false;
-    updateStatus('edge-status', 'Error', 'bad');
-  }
+  if (!captureCtx) captureCtx = captureCanvas.getContext('2d');
+  captureCanvas.width = video.videoWidth; captureCanvas.height = video.videoHeight;
+  captureCtx.drawImage(video, 0, 0);
+  let src = cv.matFromImageData(captureCtx.getImageData(0, 0, video.videoWidth, video.videoHeight));
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.GaussianBlur(gray, blur, blurKSize, 1.1);
+  cv.Canny(blur, edges, 35, 95);
+  cv.resize(edges, procRGBA, new cv.Size(320, state.procH));
+  if (state.debugEdges) { cv.imshow(cvCanvas, procRGBA); drawMlOverlay(); }
+  src.delete();
 }
 
 function drawMlOverlay() {
   if (!state.mlLastBox || state.mlLastScore < state.mlMinScore) return;
-
   const ctx = cvCanvas.getContext('2d');
   const b = state.mlLastBox;
-  const x = Math.max(0, Math.min(state.procW - 1, b.x));
-  const y = Math.max(0, Math.min(state.procH - 1, b.y));
-  const w = Math.max(1, Math.min(state.procW - x, b.w));
-  const h = Math.max(1, Math.min(state.procH - y, b.h));
-
-  ctx.strokeStyle = 'rgba(0,255,0,0.9)';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(x, y, w, h);
-
-  const label = state.mlLastClass + ' ' + (state.mlLastScore * 100).toFixed(0) + '%';
-  ctx.fillStyle = 'rgba(0,255,0,0.8)';
-  ctx.fillRect(x, y - 16, 140, 16);
-  ctx.fillStyle = '#000';
-  ctx.font = '12px monospace';
-  ctx.fillText(label, x + 4, y - 4);
+  ctx.strokeStyle = '#0f0'; ctx.lineWidth = 2;
+  ctx.strokeRect(b.x, b.y, b.w, b.h);
 }
-
-/* ==================== COCO-SSD ==================== */
-let tfRef = null;
-let cocoRef = null;
 
 async function ensureCocoSsdLoaded() {
   if (state.mlReady || state.mlLoading) return;
-  state.mlLoading = true;
-  updateStatus('ml-status', 'Loading...', 'warn');
-
-  try {
-    if (!window.tf) {
-      const tfScript = document.createElement('script');
-      tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js';
-      await new Promise((resolve, reject) => {
-        tfScript.onload = resolve;
-        tfScript.onerror = reject;
-        document.head.appendChild(tfScript);
-      });
-    }
-
-    if (!window.cocoSsd) {
-      const cocoScript = document.createElement('script');
-      cocoScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js';
-      await new Promise((resolve, reject) => {
-        cocoScript.onload = resolve;
-        cocoScript.onerror = reject;
-        document.head.appendChild(cocoScript);
-      });
-    }
-
-    tfRef = window.tf;
-    cocoRef = window.cocoSsd;
-
-    if (!tfRef || !cocoRef) throw new Error('Libraries not loaded');
-
-    try { await tfRef.setBackend('webgl'); } catch (_) {}
-    try { await tfRef.ready(); } catch (_) {}
-
-    state.mlModel = await cocoRef.load({ base: 'lite_mobilenet_v2' });
-    state.mlReady = true;
-    state.mlLoading = false;
-    updateStatus('ml-status', 'Ready', 'good');
-  } catch (e) {
-    console.error('ML load error:', e);
-    state.mlLoading = false;
-    updateStatus('ml-status', 'Error', 'bad');
+  state.mlLoading = true; updateStatus('ml-status', 'Loading...', 'warn');
+  const scripts = ['https://cdn.jsdelivr.net/npm/@tensorflow/tfjs', 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd'];
+  for (let s of scripts) {
+    let script = document.createElement('script'); script.src = s;
+    await new Promise(r => { script.onload = r; document.head.appendChild(script); });
   }
+  state.mlModel = await cocoSsd.load();
+  state.mlReady = true; state.mlLoading = false; updateStatus('ml-status', 'Ready', 'good');
 }
 
-const grabCanvas = document.createElement('canvas');
-
-async function runCocoOnce(nowMs) {
-  if (!state.mlEnabled || !state.mlReady) return;
-  if (nowMs < state.mlNextAtMs) return;
-  state.mlNextAtMs = nowMs + state.mlIntervalMs;
-  if (state.mlInFlight || state.frozen) return;
-
-  state.mlInFlight = true;
-  try {
-    grabCanvas.width = state.procW;
-    grabCanvas.height = state.procH;
-    const gctx = grabCanvas.getContext('2d');
-    gctx.drawImage(video, 0, 0, state.procW, state.procH);
-
-    const preds = await state.mlModel.detect(grabCanvas, 6);
-    let best = null;
-
-    for (const p of preds) {
-      if (!p || !p.bbox || p.score < state.mlMinScore) continue;
-      if (!ML_ALLOWED.has(p.class)) continue;
-
-      const [x, y, w, h] = p.bbox;
-      const cy = y + h * 0.5;
-      const area = w * h;
-      const bottomW = Math.max(0, Math.min(1, (cy - 0.55 * state.procH) / (0.45 * state.procH)));
-      const score = p.score * (0.25 + 0.75 * bottomW) * (1 + area / (state.procW * state.procH) * 2.0);
-
-      if (!best || score > best._score) {
-        best = { ...p, _score: score };
-      }
-    }
-
-    if (best) {
-      state.mlLastClass = best.class;
-      state.mlLastScore = best.score;
-      const [x, y, w, h] = best.bbox;
-      state.mlLastBox = { x, y, w, h };
-      state.lastObstacleScore = Math.round((best._score || 0) * 1000);
-      updateStatus('obs-score', (state.lastObstacleScore / 1000).toFixed(3), 'warn');
-    } else {
-      state.mlLastClass = '';
-      state.mlLastScore = 0;
-      state.mlLastBox = null;
-      state.lastObstacleScore = 0;
-    }
-  } catch (e) {
-    console.error('COCO error:', e);
+async function runCocoOnce(now) {
+  if (!state.mlEnabled || !state.mlReady || state.mlInFlight || now < state.mlNextAtMs) return;
+  state.mlNextAtMs = now + state.mlIntervalMs; state.mlInFlight = true;
+  const grabCanvas = document.createElement('canvas');
+  grabCanvas.width = 320; grabCanvas.height = state.procH;
+  grabCanvas.getContext('2d').drawImage(video, 0, 0, 320, state.procH);
+  const preds = await state.mlModel.detect(grabCanvas);
+  let best = preds.find(p => ML_ALLOWED.has(p.class) && p.score > state.mlMinScore);
+  if (best) {
+    state.mlLastClass = best.class; state.mlLastScore = best.score;
+    state.mlLastBox = { x: best.bbox[0], y: best.bbox[1], w: best.bbox[2], h: best.bbox[3] };
+    state.lastObstacleScore = Math.round(best.score * 1000);
+    updateStatus('obs-score', (state.lastObstacleScore / 1000).toFixed(3), 'warn');
+  } else {
+    state.lastObstacleScore = 0; state.mlLastBox = null;
   }
   state.mlInFlight = false;
 }
 
-/* ==================== Gemma統合 ==================== */
-async function askGemmaDecision(nowMs) {
-  if (!state.mlEnabled || !state.mlReady) return;
-  if (nowMs < state.gemmaNextAtMs) return;
-  state.gemmaNextAtMs = nowMs + state.gemmaIntervalMs;
+/* ==================== Gemma 統合 (修正版) ==================== */
+async function askGemmaDecision(now) {
+  if (!state.robotEnabled || state.isGemmaThinking || now < state.gemmaNextAtMs) return;
+  state.isGemmaThinking = true;
+  state.gemmaNextAtMs = now + state.gemmaIntervalMs;
 
-  // ✅ Hugging Face API の期待する形式
   const sensorData = {
-    front_distance: parseFloat((Math.max(0, Math.min(1, 1.0 - (state.lastObstacleScore / 1000.0)))).toFixed(2)),
-    speed: parseFloat((state.robotVLin || 0.0).toFixed(2))
+    front_distance: Math.round((1.0 - (state.lastObstacleScore / 1000)) * 100),
+    speed: parseFloat(state.robotVLin.toFixed(2))
   };
 
-  updateStatus('gemma-status', 'Asking...', 'warn');
-  console.log('Gemma Request:', JSON.stringify(sensorData));
-
+  updateStatus('gemma-status', 'Thinking...', 'warn');
   try {
-    const url = 'https://KGNINJA-FunctionGemmabotdemo-docker.hf.space/decide';
-    
-    const res = await Promise.race([
-      fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sensorData)
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 60000))  // 60秒に延長
-    ]);
-
-    if (!res.ok) {
-      const err = await res.text();
-      console.log('Response status:', res.status, 'Body:', err.substring(0, 100));
-      throw new Error('HTTP ' + res.status);
+    const res = await fetch('https://kgninja-functiongemmabotdemo-docker.hf.space/decide', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sensorData)
+    });
+    const json = await res.json();
+    const match = json.data[0].match(/\{.*\}/s);
+    if (match) {
+      const decision = JSON.parse(match[0]);
+      state.gemmaLastDecision = (decision.action || 'STOP').toUpperCase();
+      document.getElementById('last-decision').textContent = state.gemmaLastDecision;
+      applyGemmaDecision(decision);
+      updateStatus('gemma-status', 'Ready', 'good');
     }
-
-    const text = await res.text();
-    console.log('Raw response:', text.substring(0, 200));
-    
-    let decision = JSON.parse(text);
-    
-    console.log('Gemma Response:', decision);
-    applyGemmaDecision(decision);
-    state.gemmaLastDecision = decision.action || 'unknown';
-    updateStatus('gemma-status', decision.action || 'ready', 'good');
-  } catch (e) {
-    console.error('Gemma Error:', e.message);
-    updateStatus('gemma-status', 'Error', 'bad');
-  }
+  } catch (e) { updateStatus('gemma-status', 'Error', 'bad'); }
+  state.isGemmaThinking = false;
 }
 
 function applyGemmaDecision(d) {
-  if (!d || !state.robotEnabled) return;
-
-  const action = String(d.action || '').toLowerCase();
-  const speed = d.speed || 0.3;
-
-  switch (action) {
-    case 'move_forward':
-      sendRobotCommand(speed, 0);
-      break;
-    case 'turn_left':
-      sendRobotCommand(speed * 0.5, 0.5);
-      break;
-    case 'turn_right':
-      sendRobotCommand(speed * 0.5, -0.5);
-      break;
-    default:
-      emergencyStop();
-  }
+  const action = String(d.action).toLowerCase();
+  if (action.includes('forward')) sendRobotCommand(0.7, 0);
+  else if (action.includes('left')) sendRobotCommand(0.2, 1.2);
+  else if (action.includes('right')) sendRobotCommand(0.2, -1.2);
+  else emergencyStop();
 }
 
-/* ==================== ロボット制御 ==================== */
-function sendRobotCommand(lin, ang) {
-  state.robotVLin = Math.max(-0.5, Math.min(0.5, lin));
-  state.robotVAng = Math.max(-1.0, Math.min(1.0, ang));
-}
-
-function emergencyStop() {
-  state.robotVLin = 0;
-  state.robotVAng = 0;
-}
+/* ==================== ロボット制御・シミュレーター ==================== */
+function sendRobotCommand(lin, ang) { state.robotVLin = lin; state.robotVAng = ang; }
+function emergencyStop() { state.robotVLin = 0; state.robotVAng = 0; }
 
 function updateRobotSim(dt) {
   if (!state.robotEnabled) return;
-
   state.robotTheta += state.robotVAng * dt;
   state.robotX += Math.cos(state.robotTheta) * state.robotVLin * dt * 80;
   state.robotY += Math.sin(state.robotTheta) * state.robotVLin * dt * 80;
-
-  const SIM = 240;
-  state.robotX = Math.max(10, Math.min(SIM - 10, state.robotX));
-  state.robotY = Math.max(10, Math.min(SIM - 10, state.robotY));
-
-  state.robotTrail.push({ x: state.robotX, y: state.robotY });
-  if (state.robotTrail.length > 200) state.robotTrail.shift();
+  if (state.robotX < 0) state.robotX = 240; if (state.robotX > 240) state.robotX = 0;
+  if (state.robotY < 0) state.robotY = 240; if (state.robotY > 240) state.robotY = 0;
 }
 
 function drawRobotSim() {
-  const canvas = document.getElementById('robot-sim');
-  const ctx = canvas.getContext('2d');
-  const SIM = 240;
-
-  ctx.fillStyle = '#001';
-  ctx.fillRect(0, 0, SIM, SIM);
-
-  ctx.strokeStyle = 'rgba(0,100,0,0.2)';
-  for (let i = 0; i <= SIM; i += 40) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i, SIM);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, i);
-    ctx.lineTo(SIM, i);
-    ctx.stroke();
-  }
-
-  if (state.robotTrail.length > 1) {
-    ctx.strokeStyle = 'rgba(0,255,0,0.4)';
-    ctx.beginPath();
-    state.robotTrail.forEach((p, i) => {
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    });
-    ctx.stroke();
-  }
-
-  ctx.save();
-  ctx.translate(state.robotX, state.robotY);
-  ctx.rotate(state.robotTheta);
-  ctx.fillStyle = state.robotEnabled ? '#0f0' : '#555';
-  ctx.beginPath();
-  ctx.moveTo(10, 0);
-  ctx.lineTo(-10, -6);
-  ctx.lineTo(-10, 6);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-
-  ctx.fillStyle = '#0f0';
+  const ctx = document.getElementById('robot-sim').getContext('2d');
+  ctx.fillStyle = '#001'; ctx.fillRect(0, 0, 240, 240);
+  // グリッド
+  ctx.strokeStyle = 'rgba(0,255,0,0.1)';
+  for(let i=0; i<240; i+=40){ ctx.strokeRect(i,0,1,240); ctx.strokeRect(0,i,240,1); }
+  
+  // 🤖 AI思考表示 (HUD)
+  ctx.fillStyle = '#0f0'; ctx.font = 'bold 13px monospace';
+  ctx.fillText('AI: ' + state.gemmaLastDecision, 10, 25);
   ctx.font = '10px monospace';
-  ctx.fillText('v:' + state.robotVLin.toFixed(2), 5, 14);
-  ctx.fillText('w:' + state.robotVAng.toFixed(2), 5, 24);
+  ctx.fillText('DIST: ' + Math.round((1.0 - state.lastObstacleScore/1000)*100), 10, 40);
+
+  // ロボット
+  ctx.save(); ctx.translate(state.robotX, state.robotY); ctx.rotate(state.robotTheta);
+  ctx.strokeStyle = '#0f0'; ctx.lineWidth = 2; ctx.strokeRect(-8, -8, 16, 16);
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(12,0); ctx.stroke(); ctx.restore();
 }
 
-/* ==================== キー入力 ==================== */
-const keys = {};
-
-window.addEventListener('keydown', (ev) => {
-  keys[ev.code] = true;
-
-  if (ev.code === 'Space') {
-    ev.preventDefault();
-    state.frozen = !state.frozen;
-  } else if (ev.code === 'KeyM') {
-    state.mlEnabled = !state.mlEnabled;
-    if (state.mlEnabled) ensureCocoSsdLoaded();
-  } else if (ev.code === 'KeyR') {
-    state.robotEnabled = !state.robotEnabled;
-    updateStatus('robot-mode', state.robotEnabled ? 'ON' : 'OFF', state.robotEnabled ? 'good' : 'warn');
-  } else if (ev.code === 'KeyX') {
-    emergencyStop();
-  } else if (ev.code === 'KeyD') {
-    state.debugEdges = !state.debugEdges;
-  } else if (ev.code === 'KeyG') {
-    askGemmaDecision(performance.now());
-  } else if (ev.code === 'KeyT') {
-    testGemmaWithMockResponse();
-  }
+/* ==================== ループ・キー入力 ==================== */
+window.addEventListener('keydown', e => {
+  if (e.code === 'KeyM') { state.mlEnabled = !state.mlEnabled; if(state.mlEnabled) ensureCocoSsdLoaded(); }
+  if (e.code === 'KeyR') { state.robotEnabled = !state.robotEnabled; updateStatus('robot-mode', state.robotEnabled?'ON':'OFF', state.robotEnabled?'good':'warn'); }
+  if (e.code === 'KeyG') askGemmaDecision(performance.now());
 });
 
-window.addEventListener('keyup', (ev) => {
-  keys[ev.code] = false;
-});
-
-function testGemmaWithMockResponse() {
-  const mockDecisions = [
-    { action: 'move_forward' },
-    { action: 'turn_left' },
-    { action: 'turn_right' },
-    { action: 'stop' }
-  ];
-  
-  const randomDecision = mockDecisions[Math.floor(Math.random() * mockDecisions.length)];
-  console.log('Test decision:', randomDecision);
-  applyGemmaDecision(randomDecision);
-  state.gemmaLastDecision = randomDecision.action;
-  updateStatus('gemma-status', randomDecision.action, 'good');
-}
-
-/* ==================== メインループ ==================== */
-let lastCvAt = 0;
-let fpsFrames = 0;
-let fpsAccMs = 0;
-
-function animate() {
+function animate(now) {
+  if (!state.cvReady && video.videoWidth > 0) initOpenCV();
+  runCvOnce(); runCocoOnce(now);
+  askGemmaDecision(now); // 自動ループ有効
+  updateRobotSim(0.1); drawRobotSim();
   requestAnimationFrame(animate);
-
-  const nowMs = performance.now();
-
-  if (!state.cvReady && video.videoWidth > 0) {
-    initOpenCV();
-  }
-
-  if (nowMs - lastCvAt > 90) {
-    runCvOnce();
-    lastCvAt = nowMs;
-  }
-
-  runCocoOnce(nowMs);
-  
-  // 🔴 自動 Gemma 呼び出しを無効化（手動 G キーのみ）
-  // askGemmaDecision(nowMs);
-
-  if (state.robotEnabled) {
-    updateRobotSim(0.1);
-    drawRobotSim();
-  }
-
-  fpsFrames++;
-  fpsAccMs += 16;
-  if (fpsAccMs >= 500) {
-    const fps = Math.round((fpsFrames * 1000) / fpsAccMs);
-    document.getElementById('fps').textContent = 'FPS: ' + fps;
-    fpsFrames = 0;
-    fpsAccMs = 0;
-  }
 }
 
-cv['onRuntimeInitialized'] = async () => {
-  try {
-    console.log('OpenCV ready');
-    await initCamera();
-    console.log('Camera ready');
-    animate();
-  } catch (e) {
-    console.error('Startup error:', e);
-    updateStatus('camera-status', 'Unavailable', 'bad');
-  }
-};
+cv['onRuntimeInitialized'] = async () => { await initCamera(); animate(0); };
 </script>
-
 </body>
 </html>
