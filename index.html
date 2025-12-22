@@ -2,989 +2,258 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>A-1 Robot Vision - Smooth Control</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>A-1 Robot Vision – Poodle Mood</title>
+
 <style>
 * { box-sizing: border-box; }
-body { 
-  margin: 0; padding: 0; 
-  background: #000; color: #0f0; 
-  font-family: 'Courier New', monospace; 
-  font-size: 14px; 
-  overflow: hidden; 
-  width: 100vw; height: 100vh;
-  touch-action: manipulation;
+body {
+  margin:0;
+  background:#000;
+  color:#0f0;
+  font-family: "Courier New", monospace;
+  overflow:hidden;
 }
 
-/* PC / タブレット */
-@media (min-width: 768px) {
-  #camera-feed { 
-    position: absolute; top: 0; left: 0; 
-    width: 100%; height: 100%; 
-    z-index: 1; 
-  }
-  #cv { display: block; width: 100%; height: 100%; }
-  
-  #ui { 
-    position: fixed; top: 15px; left: 15px; 
-    background: rgba(0, 0, 0, 0.95); 
-    padding: 15px; 
-    border: 2px solid #0f0; 
-    z-index: 100;
-    min-width: 280px;
-    max-height: 500px;
-    overflow-y: auto;
-    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
-  }
-  
-  .robot-sim { 
-    position: fixed; 
-    bottom: 15px; right: 15px; 
-    border: 3px solid #0f0; 
-    background: rgba(0, 15, 0, 0.95); 
-    z-index: 50;
-    width: 280px;
-    height: 280px;
-    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
-  }
-  
-  #steer-gauge {
-    position: fixed;
-    top: 310px;
-    left: 15px;
-    width: 280px;
-    height: 40px;
-    z-index: 50;
-  }
-  
-  #keys-info {
-    position: fixed;
-    bottom: 15px;
-    left: 15px;
-    background: rgba(0, 0, 0, 0.95);
-    border: 2px solid #0f0;
-    padding: 10px;
-    font-size: 11px;
-    z-index: 49;
-    max-width: 280px;
-    display: block;
-  }
+/* UI */
+#ui {
+  position:fixed;
+  top:15px; left:15px;
+  background:rgba(0,0,0,0.95);
+  border:2px solid #0f0;
+  padding:12px;
+  z-index:100;
+  min-width:260px;
+  box-shadow:0 0 20px rgba(0,255,0,0.3);
+}
+.status-line {
+  display:flex;
+  justify-content:space-between;
+  margin:6px 0;
+  border-bottom:1px solid #033;
+  padding-bottom:4px;
+}
+.value { font-weight:bold; }
+
+#robot-sim {
+  position:fixed;
+  right:15px; bottom:15px;
+  width:260px; height:260px;
+  border:3px solid #0f0;
+  background:rgba(0,15,0,0.95);
+  box-shadow:0 0 20px rgba(0,255,0,0.3);
 }
 
-/* スマートフォン */
-@media (max-width: 767px) {
-  body { font-size: 12px; }
-  
-  #camera-feed { 
-    position: absolute; top: 0; left: 0; 
-    width: 100%; height: 60%; 
-    z-index: 1; 
-  }
-  #cv { display: block; width: 100%; height: 100%; }
-  
-  #ui { 
-    position: fixed; 
-    top: 60%; left: 0; right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.98); 
-    padding: 10px; 
-    border-top: 2px solid #0f0;
-    z-index: 100;
-    overflow-y: auto;
-    max-height: 40vh;
-  }
-  
-  .status-line { 
-    margin: 4px 0; 
-    padding: 3px 0;
-    font-size: 12px;
-  }
-  
-  .value { 
-    min-width: 60px;
-    font-size: 12px;
-  }
-  
-  .robot-sim { 
-    position: fixed; 
-    top: 60%; right: 0;
-    width: 160px;
-    height: 160px;
-    border: 2px solid #0f0; 
-    background: rgba(0, 15, 0, 0.95); 
-    z-index: 50;
-    box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
-  }
-  
-  #steer-gauge {
-    position: fixed;
-    top: 60%;
-    left: 0;
-    right: 160px;
-    height: 60px;
-    z-index: 50;
-  }
-  
-  #keys-info {
-    display: none; /* スマホでは非表示 */
-  }
-  
-  /* タッチボタン */
-  #touch-controls {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 60px;
-    background: rgba(0, 0, 0, 0.95);
-    border-top: 1px solid #0f0;
-    display: flex;
-    z-index: 101;
-  }
-  
-  .touch-btn {
-    flex: 1;
-    border: 1px solid #0f0;
-    background: rgba(0, 30, 0, 0.8);
-    color: #0f0;
-    font-weight: bold;
-    cursor: pointer;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    user-select: none;
-    transition: all 0.1s;
-  }
-  
-  .touch-btn:active {
-    background: rgba(0, 255, 0, 0.3);
-    box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.5);
-  }
-  
-  .touch-btn:hover {
-    background: rgba(0, 50, 0, 0.9);
-  }
+#video { position:fixed; left:-9999px; }
+#cv {
+  position:absolute;
+  inset:0;
+  width:100vw;
+  height:100vh;
+  image-rendering:pixelated;
 }
-
-.status-line { 
-  margin: 8px 0; 
-  padding: 5px 0;
-  border-bottom: 1px solid #033; 
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.label { flex: 1; }
-.value { 
-  font-weight: bold; 
-  padding: 0 8px;
-  text-align: right;
-}
-#video { position: fixed; left: -10000px; opacity: 0; }
 </style>
 </head>
+
 <body>
 
-<div id="camera-feed"><canvas id="cv"></canvas></div>
+<canvas id="cv"></canvas>
 
 <div id="ui">
-  <div style="margin-bottom: 10px; font-weight: bold; font-size: 16px; text-shadow: 0 0 10px #0f0;">
-    ⚙️ A-1 ROBOT VISION
-  </div>
-  <div class="status-line">
-    <span class="label">🎯 障害物距離</span>
-    <span class="value" id="obs-score">100</span>
-  </div>
-  <div class="status-line">
-    <span class="label">🧠 Gemma思考</span>
-    <span class="value" id="gemma-status">待機中</span>
-  </div>
-  <div class="status-line">
-    <span class="label">🤖 ロボット状態</span>
-    <span class="value" id="robot-mode" style="color:#f00">停止中</span>
-  </div>
-  <div class="status-line">
-    <span class="label">📍 現在の指示</span>
-    <span class="value" id="last-decision">-</span>
-  </div>
-  <div class="status-line">
-    <span class="label">⚡ 速度</span>
-    <span class="value" id="speed-display">0.0</span>
-  </div>
-  <div class="status-line">
-    <span class="label">🎯 ステアリング</span>
-    <span class="value" id="steer-display">→ 中立</span>
-  </div>
-  <div class="status-line">
-    <span class="label" style="flex: 1;">💭 感情状態</span>
-    <span class="value" id="emotion-display" style="font-size: 16px;">😐 平静</span>
-  </div>
+  <b>🐩 A-1 ROBOT VISION</b>
+  <div class="status-line"><span>距離</span><span id="obs-score" class="value">100</span></div>
+  <div class="status-line"><span>Gemma</span><span id="gemma-status" class="value">待機</span></div>
+  <div class="status-line"><span>動作</span><span id="robot-mode" class="value" style="color:#f00">停止</span></div>
+  <div class="status-line"><span>判断</span><span id="last-decision" class="value">-</span></div>
+  <div class="status-line"><span>感情</span><span id="emotion-display" class="value">🐩 うれしい！</span></div>
 </div>
 
-<div style="position: fixed; top: 310px; left: 15px; width: 280px; height: 40px; background: rgba(0, 0, 0, 0.95); border: 2px solid #0f0; z-index: 50; box-shadow: 0 0 20px rgba(0, 255, 0, 0.3); display: none;" id="emotion-bar-pc">
-  <canvas id="emotion-gauge" width="280" height="40" style="display: block; width: 100%; height: 100%;"></canvas>
-</div>
-
-<div id="keys-info">
-  <div style="font-weight: bold; margin-bottom: 5px;">操作キー</div>
-  <div>M キー: AI認識 ON/OFF</div>
-  <div>R キー: ロボット動作 ON/OFF</div>
-</div>
-
-<canvas id="robot-sim" class="robot-sim" width="280" height="280"></canvas>
+<canvas id="robot-sim"></canvas>
 <video id="video" autoplay playsinline muted></video>
 
-<!-- スマートフォン用タッチコントロール -->
-<div id="touch-controls">
-  <button class="touch-btn" id="btn-ai">🧠 AI</button>
-  <button class="touch-btn" id="btn-robot">🤖 動作</button>
-  <button class="touch-btn" id="btn-camera">📹</button>
-  <button class="touch-btn" id="btn-info">ℹ️</button>
-</div>
-
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
 
 <script>
+/* =====================
+   STATE
+===================== */
 const state = {
-  cvReady: false,
-  mlReady: false,
-  mlEnabled: false,
-  mlInFlight: false,
-  lastObstacleScore: 100,
-  robotEnabled: false,
-  
-  robotX: 140,
-  robotY: 140,
-  robotTheta: 0,
-  robotVLin: 0,
-  robotVAng: 0,
-  targetVLin: 0,
-  targetVAng: 0,
-  
-  gemmaLastAction: 'WAITING',
-  gemmaNextAt: 0,
-  gemmaThinking: false,
-  
-  // ステアリング情報
-  steerValue: 0,  // -1..+1 (左危険=負、右危険=正)
-  steerNextAt: 0
+  cvReady:false,
+  mlReady:false,
+  mlEnabled:false,
+  mlInFlight:false,
+  lastObstacleScore:100,
+
+  robotEnabled:false,
+  robotX:130,
+  robotY:130,
+  robotTheta:0,
+  robotVLin:0,
+  robotVAng:0,
+  targetVLin:0,
+  targetVAng:0,
+
+  gemmaThinking:false,
+  gemmaNextAt:0,
+
+  /* 🐩 感情モデル */
+  emotionCore:'happy',
+  emotionBase:'happy',
+  emotionOverlay:null,
+  emotionOverlayUntil:0,
+  emotionState:'happy',
+  emotionIntensity:0.7,
+  emotionNextUpdate:0
 };
 
-const video = document.getElementById('video');
-const cvCanvas = document.getElementById('cv');
+const video = document.getElementById("video");
+const cvCanvas = document.getElementById("cv");
+const cvCtx = cvCanvas.getContext("2d");
 
-async function loadML() {
-  if (window.tf && window.cocoSsd) return;
-  
-  console.log("Loading TensorFlow.js...");
-  
-  try {
-    if (!window.tf) {
-      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0");
-    }
-    if (!window.cocoSsd) {
-      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3");
-    }
-    state.model = await cocoSsd.load();
-    state.mlReady = true;
-    document.getElementById('gemma-status').textContent = '準備完了';
-    console.log("ML Model Ready");
-  } catch (e) {
-    console.error("ML Load Error:", e);
-    document.getElementById('gemma-status').textContent = 'エラー';
+cvCanvas.width = innerWidth;
+cvCanvas.height = innerHeight;
+
+/* =====================
+   CAMERA
+===================== */
+navigator.mediaDevices.getUserMedia({video:true}).then(s=>{
+  video.srcObject=s;
+  video.play();
+});
+
+/* =====================
+   ML
+===================== */
+let model=null;
+async function loadML(){
+  if(model) return;
+  model = await cocoSsd.load();
+  state.mlReady=true;
+  document.getElementById("gemma-status").textContent="準備完了";
+}
+async function runML(){
+  if(!state.mlEnabled || !state.mlReady || state.mlInFlight) return;
+  state.mlInFlight=true;
+  const preds = await model.detect(video);
+  if(preds.length){
+    state.lastObstacleScore=Math.round(preds[0].score*100);
+  } else {
+    state.lastObstacleScore=100;
   }
+  document.getElementById("obs-score").textContent=state.lastObstacleScore;
+  state.mlInFlight=false;
 }
 
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = src;
-    s.onload = resolve;
-    s.onerror = reject;
-    document.head.appendChild(s);
+/* =====================
+   🐩 POODLE EMOTION MODEL
+===================== */
+function updateEmotionalState(){
+  const now=performance.now();
+  if(now<state.emotionNextUpdate) return;
+  state.emotionNextUpdate=now+250;
+
+  const safe = state.lastObstacleScore>60;
+  const verySafe = state.lastObstacleScore>80;
+  const moving = state.robotEnabled && state.robotVLin>0.2;
+  const fast = state.robotVLin>0.6;
+  const thinking = state.gemmaThinking || state.mlInFlight;
+
+  /* BASE */
+  if(fast && verySafe){
+    state.emotionBase='excited';
+  } else if(moving && safe){
+    state.emotionBase='happy';
+  } else if(safe){
+    state.emotionBase='confident';
+  } else {
+    state.emotionBase='curious';
+  }
+
+  /* OVERLAY */
+  if(thinking){
+    state.emotionOverlay='curious';
+    state.emotionOverlayUntil=now+500;
+  }
+  if(state.lastObstacleScore<30){
+    state.emotionOverlay='alert';
+    state.emotionOverlayUntil=now+700;
+  }
+  if(state.emotionOverlay && now>state.emotionOverlayUntil){
+    state.emotionOverlay=null;
+  }
+
+  state.emotionState = state.emotionOverlay || state.emotionBase;
+
+  state.emotionIntensity =
+    state.emotionState==='excited' ? Math.min(1,state.robotVLin)
+    : state.emotionState==='happy' ? 0.7
+    : state.emotionState==='confident' ? 0.5
+    : 0.6;
+
+  document.getElementById("emotion-display").textContent=getEmotionLabel();
+}
+
+function getEmotionLabel(){
+  return {
+    happy:'🐩 うれしい！',
+    excited:'🐩✨ たのしい！',
+    confident:'🐩 余裕〜',
+    curious:'🐩？ なになに？',
+    alert:'🐩！ ちょっと待って'
+  }[state.emotionState]||'🐩';
+}
+
+/* =====================
+   SOUND
+===================== */
+function playEmotionSound(){
+  const ctx = window.audioCtx || new AudioContext();
+  window.audioCtx=ctx;
+  const map={
+    happy:[[660,80],[880,80]],
+    excited:[[880,60],[1100,60],[880,60]],
+    curious:[[520,70],[660,70]],
+    confident:[[440,120]],
+    alert:[[1200,50],[800,50]]
+  };
+  const seq = map[state.emotionState]||map.happy;
+  let t=ctx.currentTime;
+  seq.forEach(([f,d])=>{
+    const o=ctx.createOscillator();
+    const g=ctx.createGain();
+    o.frequency.value=f;
+    o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.15*state.emotionIntensity,t);
+    g.gain.exponentialRampToValueAtTime(0.01,t+d/1000);
+    o.start(t); o.stop(t+d/1000);
+    t+=d/1000+0.04;
   });
 }
 
-const capCanvas = document.createElement('canvas');
-const capCtx = capCanvas.getContext('2d', { willReadFrequently: true });
-
-function runCV() {
-  if (!state.cvReady || !video.videoWidth) return;
-  
-  capCanvas.width = video.videoWidth;
-  capCanvas.height = video.videoHeight;
-  capCtx.drawImage(video, 0, 0);
-  
-  let src = cv.matFromImageData(capCtx.getImageData(0, 0, video.videoWidth, video.videoHeight));
-  let gray = new cv.Mat();
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  cv.Canny(gray, gray, 50, 100);
-  cv.imshow(cvCanvas, gray);
-  
-  src.delete();
-  gray.delete();
-}
-
-async function runML() {
-  if (!state.mlEnabled || !state.mlReady || state.mlInFlight) return;
-  
-  state.mlInFlight = true;
-  
-  try {
-    const preds = await state.model.detect(capCanvas);
-    
-    if (preds.length > 0) {
-      let obj = preds.sort((a, b) => b.score - a.score)[0];
-      state.lastObstacleScore = Math.max(5, Math.min(100, Math.round(obj.score * 100)));
-    } else {
-      state.lastObstacleScore = 100;
-    }
-    
-    document.getElementById('obs-score').textContent = state.lastObstacleScore;
-    
-  } catch (e) {
-    console.error("ML Error:", e);
-  } finally {
-    state.mlInFlight = false;
-  }
-}
-
-// 感情計算用のデータ
-const steeringGradient = {
-  columns: new Float32Array(9),
-  bestSteer: 0
-};
-
-function calculateSteering() {
-  // 簡易的なステアリング計算：ランダムなグラデーションシミュレーション
-  // 実際の画像勾配の代わりに、平滑化されたランダム値を使用
-  const now = performance.now();
-  
-  if (now < state.steerNextAt) return;
-  state.steerNextAt = now + 200; // 200ms ごとに更新
-  
-  // 各セクションに小さなランダム変動を加える
-  let sum = 0;
-  for (let i = 0; i < steeringGradient.columns.length; i++) {
-    // 前フレームの値に小さな変動を加える（平滑化）
-    steeringGradient.columns[i] += (Math.random() - 0.5) * 0.3;
-    steeringGradient.columns[i] = Math.max(0, Math.min(1, steeringGradient.columns[i]));
-    sum += steeringGradient.columns[i];
-  }
-  
-  // 最小危険方向を探す
-  let minIdx = 0;
-  let minVal = Infinity;
-  for (let i = 0; i < steeringGradient.columns.length; i++) {
-    if (steeringGradient.columns[i] < minVal) {
-      minVal = steeringGradient.columns[i];
-      minIdx = i;
-    }
-  }
-  
-  // -1..+1 に正規化（中央 = 4）
-  const mid = (steeringGradient.columns.length - 1) / 2;
-  state.steerValue = (minIdx - mid) / mid;
-  
-  // UI更新
-  let steerLabel = '→ 中立';
-  if (state.steerValue < -0.3) {
-    steerLabel = '← 左危険';
-  } else if (state.steerValue > 0.3) {
-    steerLabel = '右危険 →';
-  }
-  document.getElementById('steer-display').textContent = steerLabel;
-}
-
-// 感情状態を更新（センサー値に基づく）
-function updateEmotionalState() {
-  const now = performance.now();
-  if (now < state.emotionNextUpdate) return;
-  state.emotionNextUpdate = now + 300; // 300ms ごとに更新
-  
-  // 感情判定ロジック
-  const distance = state.lastObstacleScore;
-  const hasConfidence = distance > 60;
-  const isAlert = distance < 40;
-  const isConfused = state.gemmaThinking || state.mlInFlight;
-  const isExcited = state.robotEnabled && state.robotVLin > 0.5;
-  
-  // 感情の決定
-  if (isConfused) {
-    state.emotionState = 'confused';    // 🤔 紫
-    state.emotionIntensity = 0.8;
-  } else if (isAlert) {
-    state.emotionState = 'alert';       // ⚠️ 赤
-    state.emotionIntensity = Math.min(1, 1 - distance / 40);
-  } else if (isExcited) {
-    state.emotionState = 'excited';     // 😄 黄色
-    state.emotionIntensity = Math.min(1, state.robotVLin / 0.8);
-  } else if (hasConfidence) {
-    state.emotionState = 'confident';   // 😊 緑
-    state.emotionIntensity = (distance - 60) / 40;
-  } else {
-    state.emotionState = 'neutral';     // 😐 青
-    state.emotionIntensity = 0.5;
-  }
-}
-
-// 感情に基づいて音を再生
-function playEmotionSound() {
-  // R2-D2 風のサウンドパターン
-  const emotionSounds = {
-    neutral: [
-      { freq: 660, duration: 100 },   // ピ
-      { freq: 440, duration: 100 }    // ポ
-    ],
-    alert: [
-      { freq: 880, duration: 80 },    // ピッ
-      { freq: 600, duration: 80 },    // ポッ
-      { freq: 880, duration: 80 }     // ピッ
-    ],
-    confident: [
-      { freq: 330, duration: 150 },   // ぽーん（低）
-      { freq: 550, duration: 150 }    // ぽーん（中）
-    ],
-    confused: [
-      { freq: 440, duration: 50 },    // ピ
-      { freq: 330, duration: 50 },    // ポ
-      { freq: 440, duration: 50 },    // ピ
-      { freq: 330, duration: 50 }     // ポ
-    ],
-    excited: [
-      { freq: 550, duration: 80 },    // ピ
-      { freq: 770, duration: 80 },    // ポ
-      { freq: 550, duration: 80 },    // ピ
-      { freq: 770, duration: 80 }     // ポ
-    ]
-  };
-  
-  const soundSequence = emotionSounds[state.emotionState] || emotionSounds.neutral;
-  
-  try {
-    const audioContext = window.audioContext || new (window.AudioContext || window.webkitAudioContext)();
-    window.audioContext = audioContext;
-    
-    let currentTime = audioContext.currentTime;
-    
-    soundSequence.forEach((sound) => {
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      
-      oscillator.frequency.value = sound.freq;
-      oscillator.type = 'sine';
-      
-      // ビープ音のエンベロープ（素早い立ち上がりと落ち込み）
-      const duration = sound.duration / 1000;
-      const volume = state.emotionIntensity * 0.15;
-      
-      gainNode.gain.setValueAtTime(volume, currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, currentTime + duration * 0.8);
-      gainNode.gain.setValueAtTime(0, currentTime + duration);
-      
-      oscillator.start(currentTime);
-      oscillator.stop(currentTime + duration);
-      
-      currentTime += duration + 0.05; // 音と音の間に少し間隔
-    });
-  } catch (e) {
-    console.log('Audio playback not available:', e);
-  }
-}
-
-// 感情色を取得
-function getEmotionColor() {
-  const colors = {
-    neutral: '#00AAFF',     // 青 - 平静
-    alert: '#FF3333',       // 赤 - 警戒
-    confident: '#00FF00',   // 緑 - 確信
-    confused: '#BB00FF',    // 紫 - 困惑
-    excited: '#FFDD00'      // 黄 - 興奮
-  };
-  return colors[state.emotionState] || '#00FF00';
-}
-
-// 感情ラベルを取得
-function getEmotionLabel() {
-  const labels = {
-    neutral: '😐 平静',
-    alert: '⚠️ 警戒',
-    confident: '😊 確信',
-    confused: '🤔 困惑',
-    excited: '😄 興奮'
-  };
-  return labels[state.emotionState] || '...';
-}
-
-// R2-D2スタイルの音声効果（イベント時）
-function playR2D2Sound(type) {
-  const soundPatterns = {
-    startup: [
-      { freq: 400, duration: 200 },
-      { freq: 600, duration: 150 },
-      { freq: 800, duration: 200 }
-    ],
-    success: [
-      { freq: 550, duration: 100 },
-      { freq: 770, duration: 100 },
-      { freq: 550, duration: 100 }
-    ],
-    error: [
-      { freq: 700, duration: 100 },
-      { freq: 400, duration: 100 },
-      { freq: 700, duration: 100 },
-      { freq: 400, duration: 100 }
-    ],
-    movement: [
-      { freq: 500, duration: 60 },
-      { freq: 700, duration: 60 }
-    ]
-  };
-  
-  const pattern = soundPatterns[type] || soundPatterns.movement;
-  
-  try {
-    const audioContext = window.audioContext || new (window.AudioContext || window.webkitAudioContext)();
-    window.audioContext = audioContext;
-    
-    let currentTime = audioContext.currentTime;
-    
-    pattern.forEach((sound) => {
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      
-      oscillator.frequency.value = sound.freq;
-      oscillator.type = 'sine';
-      
-      const duration = sound.duration / 1000;
-      gainNode.gain.setValueAtTime(0.2, currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, currentTime + duration * 0.7);
-      gainNode.gain.setValueAtTime(0, currentTime + duration);
-      
-      oscillator.start(currentTime);
-      oscillator.stop(currentTime + duration);
-      
-      currentTime += duration + 0.03;
-    });
-  } catch (e) {
-    console.log('Audio not available');
-  }
-}
-
-async function askGemma(now) {
-  if (!state.robotEnabled || now < state.gemmaNextAt || state.gemmaThinking) return;
-  
-  state.gemmaThinking = true;
-  state.gemmaNextAt = now + 2500;
-  document.getElementById('gemma-status').textContent = '思考中...';
-  
-  const distance = state.lastObstacleScore;
-  console.log("Distance:", distance);
-  
-  try {
-    const res = await fetch('https://kgninja-functiongemmabotdemo-docker.hf.space/decide', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        front_distance: distance,
-        speed: state.robotVLin,
-        steer: state.steerValue  // ステアリング情報を送信
-      })
-    });
-    
-    const json = await res.json();
-    console.log("API Response:", json);
-    
-    let action = null;
-    
-    if (json.data && json.data[0]) {
-      const match = json.data[0].match(/\{.*\}/s);
-      if (match) {
-        const d = JSON.parse(match[0]);
-        action = (d.action || '').toLowerCase();
-        console.log("Parsed action:", action);
-      }
-    }
-    
-    // APIが無効な応答の場合、距離ベースのフォールバック
-    if (!action) {
-      console.warn("⚠️ API invalid, using fallback logic");
-      if (distance < 30) {
-        action = Math.random() > 0.5 ? 'turn_left' : 'turn_right';
-      } else if (distance < 60) {
-        const actions = ['move_forward', 'turn_left', 'turn_right'];
-        action = actions[Math.floor(Math.random() * 3)];
-      } else {
-        action = 'move_forward';
-      }
-      console.log("Fallback action:", action);
-    }
-    
-    state.gemmaLastAction = action.toUpperCase().replace('_', ' ');
-    document.getElementById('last-decision').textContent = state.gemmaLastAction;
-    document.getElementById('gemma-status').textContent = '完了 ✓';
-    
-    // アクションに基づいて目標速度を設定
-    if (action === 'move_forward') {
-      state.targetVLin = 0.8;
-      state.targetVAng = 0;
-      console.log("→ FORWARD");
-    } else if (action === 'turn_left') {
-      state.targetVLin = 0.3;
-      state.targetVAng = -2.0;  // 左回転
-      console.log("→ LEFT");
-    } else if (action === 'turn_right') {
-      state.targetVLin = 0.3;
-      state.targetVAng = 2.0;   // 右回転
-      console.log("→ RIGHT");
-    } else {
-      state.targetVLin = 0;
-      state.targetVAng = 0;
-      console.log("→ STOP");
-    }
-    
-  } catch (e) {
-    console.error("Gemma API Error:", e);
-    document.getElementById('gemma-status').textContent = 'API失敗';
-    state.targetVLin = 0;
-    state.targetVAng = 0;
-  } finally {
-    state.gemmaThinking = false;
-  }
-}
-
-function animate(now) {
-  if (!state.cvReady && video.videoWidth > 0) {
-    cvCanvas.width = 320;
-    cvCanvas.height = 240;
-    state.cvReady = true;
-  }
-  
-  runCV();
+/* =====================
+   LOOP
+===================== */
+function loop(){
+  cvCtx.drawImage(video,0,0,cvCanvas.width,cvCanvas.height);
   runML();
-  calculateSteering();  // ステアリング計算を追加
-  updateEmotionalState();  // 感情状態を更新
-  
-  if (state.mlEnabled) {
-    askGemma(now);
-  }
-  
-  if (state.robotEnabled) {
-    state.robotVLin += (state.targetVLin - state.robotVLin) * 0.15;
-    state.robotVAng += (state.targetVAng - state.robotVAng) * 0.15;
-    
-    state.robotTheta += state.robotVAng * 0.016;
-    state.robotX += Math.cos(state.robotTheta) * state.robotVLin * 3;
-    state.robotY += Math.sin(state.robotTheta) * state.robotVLin * 3;
-    
-    state.robotX = Math.max(15, Math.min(265, state.robotX));
-    state.robotY = Math.max(15, Math.min(265, state.robotY));
-  }
-  
-  document.getElementById('speed-display').textContent = state.robotVLin.toFixed(2);
-  
-  // UI更新
-  document.getElementById('emotion-display').textContent = getEmotionLabel();
-  
-  drawSimulator();
-  drawSteeringGauge();
-  drawEmotionGauge();
-  
-  // 定期的に感情音を再生（1秒ごと）
-  if (now % 1000 < 50) {
-    playEmotionSound();
-  }
-  
-  requestAnimationFrame(animate);
+  updateEmotionalState();
+  if(performance.now()%1200<40) playEmotionSound();
+  requestAnimationFrame(loop);
 }
+requestAnimationFrame(loop);
 
-function drawSteeringGauge() {
-  const canvas = document.getElementById('steer-gauge');
-  if (!canvas) return;
-  
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
-  
-  // 背景
-  ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
-  ctx.fillRect(0, 0, w, h);
-  
-  // グリッドラインと危険度バー
-  const sections = 9;
-  const secWidth = w / sections;
-  
-  for (let i = 0; i < sections; i++) {
-    const x = i * secWidth;
-    
-    // セクション背景
-    const hazardLevel = steeringGradient.columns[i];
-    const a = 0.15 + 0.65 * hazardLevel;
-    ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
-    ctx.fillRect(x + 1, 4, secWidth - 2, h - 8);
-    
-    // セクション境界線
-    ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x + 0.5, 2);
-    ctx.lineTo(x + 0.5, h - 2);
-    ctx.stroke();
+/* =====================
+   INPUT
+===================== */
+window.addEventListener("keydown",e=>{
+  if(e.code==='KeyM'){ state.mlEnabled=!state.mlEnabled; if(state.mlEnabled) loadML(); }
+  if(e.code==='KeyR'){
+    state.robotEnabled=!state.robotEnabled;
+    document.getElementById("robot-mode").textContent=state.robotEnabled?'稼働':'停止';
+    document.getElementById("robot-mode").style.color=state.robotEnabled?'#0f0':'#f00';
   }
-  
-  // 安全な方向を示す白い指標線
-  const steerX = ((state.steerValue + 1) / 2) * w;
-  ctx.strokeStyle = '#0f0';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(steerX, 2);
-  ctx.lineTo(steerX, h - 2);
-  ctx.stroke();
-  
-  // ラベル
-  ctx.font = '10px monospace';
-  ctx.fillStyle = '#0f0';
-  ctx.textAlign = 'left';
-  ctx.fillText('左', 5, 14);
-  ctx.textAlign = 'right';
-  ctx.fillText('右', w - 5, 14);
-  ctx.textAlign = 'center';
-  ctx.fillText('危険度マップ', w / 2, 14);
-}
-
-function drawEmotionGauge() {
-  const canvas = document.getElementById('emotion-gauge');
-  if (!canvas) return;
-  
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
-  
-  // 背景
-  ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
-  ctx.fillRect(0, 0, w, h);
-  
-  // 感情色の背景
-  const emotionColor = getEmotionColor();
-  ctx.fillStyle = emotionColor + '44';  // 半透明
-  ctx.fillRect(0, 0, w, h);
-  
-  // 感情インテンシティを示す矩形
-  const barWidth = w * state.emotionIntensity;
-  ctx.fillStyle = emotionColor;
-  ctx.fillRect(0, 0, barWidth, h);
-  
-  // 枠線
-  ctx.strokeStyle = emotionColor;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(0, 0, w, h);
-  
-  // ラベル
-  ctx.font = 'bold 14px monospace';
-  ctx.fillStyle = '#fff';
-  ctx.textAlign = 'center';
-  ctx.fillText(getEmotionLabel(), w / 2, h / 2 + 5);
-}
-
-function drawSimulator() {
-  const canvas = document.getElementById('robot-sim');
-  const ctx = canvas.getContext('2d');
-  
-  const w = canvas.width;
-  const h = canvas.height;
-  
-  ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
-  ctx.fillRect(0, 0, w, h);
-  
-  ctx.strokeStyle = 'rgba(0, 255, 0, 0.1)';
-  ctx.lineWidth = 1;
-  const gridSize = Math.floor(w / 10);
-  for (let i = 0; i <= w; i += gridSize) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i, h);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, i);
-    ctx.lineTo(w, i);
-    ctx.stroke();
-  }
-  
-  ctx.font = `bold ${Math.max(10, w / 20)}px monospace`;
-  ctx.fillStyle = '#0f0';
-  ctx.fillText('AI: ' + state.gemmaLastAction, w * 0.05, w * 0.1);
-  
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-  ctx.fillRect(w * 0.05, w * 0.15, w * 0.35, w * 0.08);
-  ctx.strokeStyle = '#0f0';
-  ctx.strokeRect(w * 0.05, w * 0.15, w * 0.35, w * 0.08);
-  
-  const fillWidth = (state.lastObstacleScore / 100) * (w * 0.35);
-  ctx.fillStyle = state.lastObstacleScore > 50 ? '#0f0' : state.lastObstacleScore > 20 ? '#ff0' : '#f00';
-  ctx.fillRect(w * 0.05, w * 0.15, fillWidth, w * 0.08);
-  
-  ctx.font = `${Math.max(8, w / 25)}px monospace`;
-  ctx.fillStyle = '#0f0';
-  ctx.fillText('距離: ' + state.lastObstacleScore, w * 0.07, w * 0.26);
-  
-  // スケール計算（キャンバスサイズに応じた座標変換）
-  const scale = w / 280;
-  
-  ctx.save();
-  ctx.translate(state.robotX * scale, state.robotY * scale);
-  ctx.rotate(state.robotTheta);
-  
-  ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
-  ctx.beginPath();
-  ctx.arc(0, 0, 12 * scale, 0, Math.PI * 2);
-  ctx.fill();
-  
-  ctx.strokeStyle = '#0f0';
-  ctx.lineWidth = 2 * scale;
-  ctx.stroke();
-  
-  ctx.fillStyle = '#0f0';
-  ctx.beginPath();
-  ctx.moveTo(0, -12 * scale);
-  ctx.lineTo(-6 * scale, 6 * scale);
-  ctx.lineTo(6 * scale, 6 * scale);
-  ctx.closePath();
-  ctx.fill();
-  
-  ctx.restore();
-  
-  ctx.font = `${Math.max(8, w / 28)}px monospace`;
-  ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
-  ctx.fillText('速度: ' + state.robotVLin.toFixed(2), w * 0.05, h - w * 0.05);
-  ctx.fillText('角速度: ' + state.robotVAng.toFixed(1), w * 0.5, h - w * 0.05);
-  
-  if (!state.robotEnabled) {
-    ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
-    ctx.font = `bold ${Math.max(12, w / 15)}px monospace`;
-    ctx.fillText('STOPPED', w * 0.25, h * 0.5);
-  }
-}
-
-window.addEventListener('keydown', e => {
-  if (e.code === 'KeyM') {
-    state.mlEnabled = !state.mlEnabled;
-    if (state.mlEnabled) {
-      loadML();
-      document.getElementById('gemma-status').textContent = '読み込み中...';
-    } else {
-      document.getElementById('gemma-status').textContent = '無効';
-      document.getElementById('last-decision').textContent = '-';
-    }
-  }
-  
-  if (e.code === 'KeyR') {
-    state.robotEnabled = !state.robotEnabled;
-    const modeEl = document.getElementById('robot-mode');
-    modeEl.textContent = state.robotEnabled ? '稼働中' : '停止中';
-    modeEl.style.color = state.robotEnabled ? '#0f0' : '#f00';
-    
-    if (!state.robotEnabled) {
-      state.targetVLin = 0;
-      state.targetVAng = 0;
-      state.robotVLin = 0;
-      state.robotVAng = 0;
-    }
-  }
-});
-
-// スマートフォン用タッチコントロール
-document.getElementById('btn-ai')?.addEventListener('click', () => {
-  state.mlEnabled = !state.mlEnabled;
-  if (state.mlEnabled) {
-    loadML();
-    document.getElementById('gemma-status').textContent = '読み込み中...';
-  } else {
-    document.getElementById('gemma-status').textContent = '無効';
-  }
-});
-
-document.getElementById('btn-robot')?.addEventListener('click', () => {
-  state.robotEnabled = !state.robotEnabled;
-  const modeEl = document.getElementById('robot-mode');
-  modeEl.textContent = state.robotEnabled ? '稼働中' : '停止中';
-  modeEl.style.color = state.robotEnabled ? '#0f0' : '#f00';
-  
-  if (!state.robotEnabled) {
-    state.targetVLin = 0;
-    state.targetVAng = 0;
-    state.robotVLin = 0;
-    state.robotVAng = 0;
-  }
-});
-
-document.getElementById('btn-camera')?.addEventListener('click', () => {
-  state.debugEdges = !state.debugEdges;
-});
-
-let showInfo = false;
-document.getElementById('btn-info')?.addEventListener('click', () => {
-  showInfo = !showInfo;
-  const ui = document.getElementById('ui');
-  ui.style.display = showInfo ? 'block' : 'block';
-});
-
-cv['onRuntimeInitialized'] = () => {
-  navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
-    video.srcObject = s;
-    video.play();
-    
-    // iPhone SE などの小さい画面に対応
-    adjustSimulatorSize();
-    
-    requestAnimationFrame(animate);
-    console.log("System Ready - Press M to enable AI, R to enable Robot");
-  });
-};
-
-function adjustSimulatorSize() {
-  const simCanvas = document.getElementById('robot-sim');
-  const isMobile = window.innerWidth < 768;
-  
-  if (!simCanvas) return;
-  
-  if (isMobile) {
-    // スマートフォン対応
-    const screenWidth = window.innerWidth;
-    const screenHeight = window.innerHeight;
-    
-    // カメラ: 60%, UI: 25%, ボタン: 15%
-    const availableHeight = screenHeight * 0.25;
-    const availableWidth = screenWidth;
-    
-    // 正方形を維持しながら、利用可能スペースに収める
-    const maxSize = Math.min(availableWidth * 0.4, availableHeight * 0.9);
-    
-    simCanvas.width = Math.floor(maxSize);
-    simCanvas.height = Math.floor(maxSize);
-    simCanvas.style.width = maxSize + 'px';
-    simCanvas.style.height = maxSize + 'px';
-    
-    console.log(`Simulator size: ${maxSize}px (Mobile)`);
-  } else {
-    // PC/タブレット対応
-    simCanvas.width = 280;
-    simCanvas.height = 280;
-    simCanvas.style.width = '280px';
-    simCanvas.style.height = '280px';
-  }
-}
-
-// ウィンドウリサイズ時にも調整
-window.addEventListener('resize', () => {
-  adjustSimulatorSize();
 });
 </script>
 
