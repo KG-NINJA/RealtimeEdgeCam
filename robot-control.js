@@ -1,6 +1,7 @@
 /* =========================================================
-   A-1 POODLE ROBOT – COMPLETE & STABLE JS
-   Edge Detection + Steering + Emotion (No cv.imshow)
+   A-1 POODLE ROBOT – FINAL STABLE JS
+   Edge Detection + Steering + Emotion
+   (IndexSizeError 完全対策済み)
 ========================================================= */
 
 const state = {
@@ -21,7 +22,6 @@ const state = {
   emotionOverlay: null,
   emotionOverlayUntil: 0,
   emotionState: 'happy',
-  emotionIntensity: 0.7,
   emotionNextUpdate: 0,
 };
 
@@ -37,20 +37,23 @@ let src, gray, edge;
 /* =========================================================
    CAMERA
 ========================================================= */
-navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
-  video.srcObject = s;
-  video.play();
-});
+navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+  .then(stream => {
+    video.srcObject = stream;
+    video.play();
+  });
 
 /* =========================================================
    OPENCV INIT
 ========================================================= */
-cv['onRuntimeInitialized'] = () => {
+cv.onRuntimeInitialized = () => {
   video.addEventListener('loadedmetadata', () => {
-    capCanvas.width = video.videoWidth;
+
+    // 内部解像度は video に完全一致させる
+    capCanvas.width  = video.videoWidth;
     capCanvas.height = video.videoHeight;
-    cvCanvas.width = video.videoWidth;
-    cvCanvas.height = video.videoHeight;
+    cvCanvas.width   = video.videoWidth;
+    cvCanvas.height  = video.videoHeight;
 
     src  = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
     gray = new cv.Mat();
@@ -67,22 +70,24 @@ cv['onRuntimeInitialized'] = () => {
 function runCV() {
   if (!state.cvReady) return;
 
-  const w = capCanvas.width;
-  const h = capCanvas.height;
+  const vw = capCanvas.width;
+  const vh = capCanvas.height;
 
-  capCtx.drawImage(video, 0, 0, w, h);
-  const imgData = capCtx.getImageData(0, 0, w, h);
+  // video → capCanvas
+  capCtx.drawImage(video, 0, 0, vw, vh);
+  const imgData = capCtx.getImageData(0, 0, vw, vh);
   src.data.set(imgData.data);
 
+  // Edge
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
   cv.Canny(gray, edge, 80, 150);
 
-  /* --- 前方中央のエッジ密度 --- */
+  /* -------- 前方中央エッジ密度 -------- */
   let count = 0;
-  const cx = Math.floor(w / 2);
-  const band = Math.floor(w * 0.15);
+  const cx = Math.floor(vw / 2);
+  const band = Math.floor(vw * 0.15);
 
-  for (let y = Math.floor(h * 0.4); y < Math.floor(h * 0.6); y++) {
+  for (let y = Math.floor(vh * 0.4); y < Math.floor(vh * 0.6); y++) {
     for (let x = cx - band; x < cx + band; x++) {
       if (edge.ucharPtr(y, x)[0]) count++;
     }
@@ -90,18 +95,27 @@ function runCV() {
 
   state.lastObstacleScore = Math.max(0, 100 - count / 120);
 
-  /* --- 1ch → RGBA 描画 --- */
-  const rgba = new Uint8ClampedArray(w * h * 4);
-  for (let i = 0; i < w * h; i++) {
-    const v = edge.data[i];
-    const j = i * 4;
-    rgba[j]     = 180;           // R（やさしい色）
-    rgba[j + 1] = 255;           // G
-    rgba[j + 2] = 200;           // B
-    rgba[j + 3] = v ? 255 : 0;   // エッジのみ表示
+  /* -------- canvas 解像度基準で RGBA 生成 -------- */
+  const cw = cvCanvas.width;
+  const ch = cvCanvas.height;
+  const rgba = new Uint8ClampedArray(cw * ch * 4);
+
+  for (let y = 0; y < ch; y++) {
+    const sy = Math.floor(y * vh / ch);
+    for (let x = 0; x < cw; x++) {
+      const sx = Math.floor(x * vw / cw);
+      const v = edge.ucharPtr(sy, sx)[0];
+      const i = (y * cw + x) * 4;
+
+      // プードル用やさしい色
+      rgba[i]     = 180;
+      rgba[i + 1] = 255;
+      rgba[i + 2] = 200;
+      rgba[i + 3] = v ? 255 : 0;
+    }
   }
 
-  const edgeImg = new ImageData(rgba, w, h);
+  const edgeImg = new ImageData(rgba, cw, ch);
   cvCtx.putImageData(edgeImg, 0, 0);
 }
 
@@ -122,6 +136,7 @@ function updateSteering() {
     state.targetVAng = 0.0;
   }
 
+  // なつっこい慣性
   state.robotVLin += (state.targetVLin - state.robotVLin) * 0.06;
   state.robotVAng += (state.targetVAng - state.robotVAng) * 0.06;
 }
@@ -136,7 +151,6 @@ function updateEmotion(now) {
   const d = state.lastObstacleScore;
   const fast = state.robotVLin > 0.5;
 
-  // Base
   if (fast && d > 80) {
     state.emotionBase = 'excited';
   } else if (d > 60) {
@@ -145,7 +159,6 @@ function updateEmotion(now) {
     state.emotionBase = 'curious';
   }
 
-  // Overlay
   if (d < 30) {
     state.emotionOverlay = 'alert';
     state.emotionOverlayUntil = now + 600;
@@ -166,6 +179,5 @@ function loop(now) {
   runCV();
   updateSteering();
   updateEmotion(now);
-
   requestAnimationFrame(loop);
 }
