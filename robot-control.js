@@ -1,183 +1,123 @@
 /* =========================================================
-   A-1 POODLE ROBOT – FINAL STABLE JS
-   Edge Detection + Steering + Emotion
-   (IndexSizeError 完全対策済み)
+   A-1 POODLE ROBOT – ABSOLUTE FINAL STABLE JS
+   IndexSizeError 永久封印版
 ========================================================= */
 
 const state = {
-  cvReady: false,
+  ready: false,
 
-  // センサ
-  lastObstacleScore: 100,
+  obstacle: 100,
 
-  // ロボット運動
-  robotVLin: 0,
-  robotVAng: 0,
-  targetVLin: 0,
-  targetVAng: 0,
+  v: 0, w: 0,
+  tv: 0.4, tw: 0,
 
-  // 感情
-  emotionCore: 'happy',
-  emotionBase: 'happy',
-  emotionOverlay: null,
-  emotionOverlayUntil: 0,
-  emotionState: 'happy',
-  emotionNextUpdate: 0,
+  emotion: 'happy'
 };
 
 const video = document.getElementById('video');
-const cvCanvas = document.getElementById('cv');
-const cvCtx = cvCanvas.getContext('2d');
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
 
 const capCanvas = document.createElement('canvas');
 const capCtx = capCanvas.getContext('2d', { willReadFrequently: true });
 
 let src, gray, edge;
+let DRAW_W = 0;
+let DRAW_H = 0;
+let RGBA_BUF = null;
 
-/* =========================================================
+/* ======================
    CAMERA
-========================================================= */
+====================== */
 navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-  .then(stream => {
-    video.srcObject = stream;
+  .then(s => {
+    video.srcObject = s;
     video.play();
   });
 
-/* =========================================================
+/* ======================
    OPENCV INIT
-========================================================= */
+====================== */
 cv.onRuntimeInitialized = () => {
-  video.addEventListener('loadedmetadata', () => {
-
-    // 内部解像度は video に完全一致させる
-    capCanvas.width  = video.videoWidth;
-    capCanvas.height = video.videoHeight;
-    cvCanvas.width   = video.videoWidth;
-    cvCanvas.height  = video.videoHeight;
-
-    src  = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-    gray = new cv.Mat();
-    edge = new cv.Mat();
-
-    state.cvReady = true;
-    requestAnimationFrame(loop);
-  });
+  video.addEventListener('loadedmetadata', initOnce);
 };
 
-/* =========================================================
-   EDGE DETECTION (SAFE)
-========================================================= */
-function runCV() {
-  if (!state.cvReady) return;
+function initOnce() {
+  // ★ サイズはここで一度だけ決定 ★
+  DRAW_W = video.videoWidth;
+  DRAW_H = video.videoHeight;
 
-  const vw = capCanvas.width;
-  const vh = capCanvas.height;
+  canvas.width = DRAW_W;
+  canvas.height = DRAW_H;
+  capCanvas.width = DRAW_W;
+  capCanvas.height = DRAW_H;
 
-  // video → capCanvas
-  capCtx.drawImage(video, 0, 0, vw, vh);
-  const imgData = capCtx.getImageData(0, 0, vw, vh);
-  src.data.set(imgData.data);
+  RGBA_BUF = new Uint8ClampedArray(DRAW_W * DRAW_H * 4);
 
-  // Edge
+  src  = new cv.Mat(DRAW_H, DRAW_W, cv.CV_8UC4);
+  gray = new cv.Mat();
+  edge = new cv.Mat();
+
+  state.ready = true;
+  requestAnimationFrame(loop);
+}
+
+/* ======================
+   MAIN LOOP
+====================== */
+function loop(now) {
+  if (!state.ready) return;
+
+  /* --- Capture --- */
+  capCtx.drawImage(video, 0, 0, DRAW_W, DRAW_H);
+  const img = capCtx.getImageData(0, 0, DRAW_W, DRAW_H);
+  src.data.set(img.data);
+
+  /* --- Edge --- */
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
   cv.Canny(gray, edge, 80, 150);
 
-  /* -------- 前方中央エッジ密度 -------- */
+  /* --- Obstacle score --- */
   let count = 0;
-  const cx = Math.floor(vw / 2);
-  const band = Math.floor(vw * 0.15);
+  const cx = DRAW_W >> 1;
+  const band = (DRAW_W * 0.15) | 0;
 
-  for (let y = Math.floor(vh * 0.4); y < Math.floor(vh * 0.6); y++) {
+  for (let y = (DRAW_H * 0.4) | 0; y < (DRAW_H * 0.6) | 0; y++) {
     for (let x = cx - band; x < cx + band; x++) {
       if (edge.ucharPtr(y, x)[0]) count++;
     }
   }
 
-  state.lastObstacleScore = Math.max(0, 100 - count / 120);
+  state.obstacle = Math.max(0, 100 - count / 120);
 
-  /* -------- canvas 解像度基準で RGBA 生成 -------- */
-  const cw = cvCanvas.width;
-  const ch = cvCanvas.height;
-  const rgba = new Uint8ClampedArray(cw * ch * 4);
-
-  for (let y = 0; y < ch; y++) {
-    const sy = Math.floor(y * vh / ch);
-    for (let x = 0; x < cw; x++) {
-      const sx = Math.floor(x * vw / cw);
-      const v = edge.ucharPtr(sy, sx)[0];
-      const i = (y * cw + x) * 4;
-
-      // プードル用やさしい色
-      rgba[i]     = 180;
-      rgba[i + 1] = 255;
-      rgba[i + 2] = 200;
-      rgba[i + 3] = v ? 255 : 0;
-    }
-  }
-
-  const edgeImg = new ImageData(rgba, cw, ch);
-  cvCtx.putImageData(edgeImg, 0, 0);
-}
-
-/* =========================================================
-   STEERING (v / ω)
-========================================================= */
-function updateSteering() {
-  const d = state.lastObstacleScore;
-
-  if (d < 30) {
-    state.targetVLin = 0.1;
-    state.targetVAng = 0.7;
-  } else if (d < 60) {
-    state.targetVLin = 0.3;
-    state.targetVAng = 0.3;
+  /* --- Steering --- */
+  if (state.obstacle < 30) {
+    state.tv = 0.1; state.tw = 0.7;
+    state.emotion = 'alert';
+  } else if (state.obstacle < 60) {
+    state.tv = 0.3; state.tw = 0.3;
+    state.emotion = 'curious';
   } else {
-    state.targetVLin = 0.6;
-    state.targetVAng = 0.0;
+    state.tv = 0.6; state.tw = 0.0;
+    state.emotion = 'happy';
   }
 
-  // なつっこい慣性
-  state.robotVLin += (state.targetVLin - state.robotVLin) * 0.06;
-  state.robotVAng += (state.targetVAng - state.robotVAng) * 0.06;
-}
+  state.v += (state.tv - state.v) * 0.06;
+  state.w += (state.tw - state.w) * 0.06;
 
-/* =========================================================
-   🐩 POODLE EMOTION MODEL
-========================================================= */
-function updateEmotion(now) {
-  if (now < state.emotionNextUpdate) return;
-  state.emotionNextUpdate = now + 300;
-
-  const d = state.lastObstacleScore;
-  const fast = state.robotVLin > 0.5;
-
-  if (fast && d > 80) {
-    state.emotionBase = 'excited';
-  } else if (d > 60) {
-    state.emotionBase = 'happy';
-  } else {
-    state.emotionBase = 'curious';
+  /* --- RGBA (固定バッファ) --- */
+  const buf = RGBA_BUF;
+  for (let i = 0, p = 0; i < DRAW_W * DRAW_H; i++, p += 4) {
+    const v = edge.data[i];
+    buf[p]     = 180;
+    buf[p + 1] = 255;
+    buf[p + 2] = 200;
+    buf[p + 3] = v ? 255 : 0;
   }
 
-  if (d < 30) {
-    state.emotionOverlay = 'alert';
-    state.emotionOverlayUntil = now + 600;
-  }
+  // ★ width / height は固定値のみ使用 ★
+  const imgOut = new ImageData(buf, DRAW_W, DRAW_H);
+  ctx.putImageData(imgOut, 0, 0);
 
-  if (state.emotionOverlay && now > state.emotionOverlayUntil) {
-    state.emotionOverlay = null;
-  }
-
-  state.emotionState =
-    state.emotionOverlay || state.emotionBase || state.emotionCore;
-}
-
-/* =========================================================
-   MAIN LOOP
-========================================================= */
-function loop(now) {
-  runCV();
-  updateSteering();
-  updateEmotion(now);
   requestAnimationFrame(loop);
 }
