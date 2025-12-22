@@ -217,10 +217,14 @@ body {
     <span class="label">🎯 ステアリング</span>
     <span class="value" id="steer-display">→ 中立</span>
   </div>
+  <div class="status-line">
+    <span class="label" style="flex: 1;">💭 感情状態</span>
+    <span class="value" id="emotion-display" style="font-size: 16px;">😐 平静</span>
+  </div>
 </div>
 
-<div style="position: fixed; top: 310px; left: 15px; width: 280px; height: 40px; background: rgba(0, 0, 0, 0.95); border: 2px solid #0f0; z-index: 50; box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);">
-  <canvas id="steer-gauge" width="280" height="40" style="display: block; width: 100%; height: 100%;"></canvas>
+<div style="position: fixed; top: 310px; left: 15px; width: 280px; height: 40px; background: rgba(0, 0, 0, 0.95); border: 2px solid #0f0; z-index: 50; box-shadow: 0 0 20px rgba(0, 255, 0, 0.3); display: none;" id="emotion-bar-pc">
+  <canvas id="emotion-gauge" width="280" height="40" style="display: block; width: 100%; height: 100%;"></canvas>
 </div>
 
 <div id="keys-info">
@@ -347,10 +351,10 @@ async function runML() {
   }
 }
 
-// ステアリング計算用のデータ
+// 感情計算用のデータ
 const steeringGradient = {
-  columns: new Float32Array(9),  // 9分割
-  bestSteer: 0  // -1..+1
+  columns: new Float32Array(9),
+  bestSteer: 0
 };
 
 function calculateSteering() {
@@ -392,6 +396,187 @@ function calculateSteering() {
     steerLabel = '右危険 →';
   }
   document.getElementById('steer-display').textContent = steerLabel;
+}
+
+// 感情状態を更新（センサー値に基づく）
+function updateEmotionalState() {
+  const now = performance.now();
+  if (now < state.emotionNextUpdate) return;
+  state.emotionNextUpdate = now + 300; // 300ms ごとに更新
+  
+  // 感情判定ロジック
+  const distance = state.lastObstacleScore;
+  const hasConfidence = distance > 60;
+  const isAlert = distance < 40;
+  const isConfused = state.gemmaThinking || state.mlInFlight;
+  const isExcited = state.robotEnabled && state.robotVLin > 0.5;
+  
+  // 感情の決定
+  if (isConfused) {
+    state.emotionState = 'confused';    // 🤔 紫
+    state.emotionIntensity = 0.8;
+  } else if (isAlert) {
+    state.emotionState = 'alert';       // ⚠️ 赤
+    state.emotionIntensity = Math.min(1, 1 - distance / 40);
+  } else if (isExcited) {
+    state.emotionState = 'excited';     // 😄 黄色
+    state.emotionIntensity = Math.min(1, state.robotVLin / 0.8);
+  } else if (hasConfidence) {
+    state.emotionState = 'confident';   // 😊 緑
+    state.emotionIntensity = (distance - 60) / 40;
+  } else {
+    state.emotionState = 'neutral';     // 😐 青
+    state.emotionIntensity = 0.5;
+  }
+}
+
+// 感情に基づいて音を再生
+function playEmotionSound() {
+  // R2-D2 風のサウンドパターン
+  const emotionSounds = {
+    neutral: [
+      { freq: 660, duration: 100 },   // ピ
+      { freq: 440, duration: 100 }    // ポ
+    ],
+    alert: [
+      { freq: 880, duration: 80 },    // ピッ
+      { freq: 600, duration: 80 },    // ポッ
+      { freq: 880, duration: 80 }     // ピッ
+    ],
+    confident: [
+      { freq: 330, duration: 150 },   // ぽーん（低）
+      { freq: 550, duration: 150 }    // ぽーん（中）
+    ],
+    confused: [
+      { freq: 440, duration: 50 },    // ピ
+      { freq: 330, duration: 50 },    // ポ
+      { freq: 440, duration: 50 },    // ピ
+      { freq: 330, duration: 50 }     // ポ
+    ],
+    excited: [
+      { freq: 550, duration: 80 },    // ピ
+      { freq: 770, duration: 80 },    // ポ
+      { freq: 550, duration: 80 },    // ピ
+      { freq: 770, duration: 80 }     // ポ
+    ]
+  };
+  
+  const soundSequence = emotionSounds[state.emotionState] || emotionSounds.neutral;
+  
+  try {
+    const audioContext = window.audioContext || new (window.AudioContext || window.webkitAudioContext)();
+    window.audioContext = audioContext;
+    
+    let currentTime = audioContext.currentTime;
+    
+    soundSequence.forEach((sound) => {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = sound.freq;
+      oscillator.type = 'sine';
+      
+      // ビープ音のエンベロープ（素早い立ち上がりと落ち込み）
+      const duration = sound.duration / 1000;
+      const volume = state.emotionIntensity * 0.15;
+      
+      gainNode.gain.setValueAtTime(volume, currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, currentTime + duration * 0.8);
+      gainNode.gain.setValueAtTime(0, currentTime + duration);
+      
+      oscillator.start(currentTime);
+      oscillator.stop(currentTime + duration);
+      
+      currentTime += duration + 0.05; // 音と音の間に少し間隔
+    });
+  } catch (e) {
+    console.log('Audio playback not available:', e);
+  }
+}
+
+// 感情色を取得
+function getEmotionColor() {
+  const colors = {
+    neutral: '#00AAFF',     // 青 - 平静
+    alert: '#FF3333',       // 赤 - 警戒
+    confident: '#00FF00',   // 緑 - 確信
+    confused: '#BB00FF',    // 紫 - 困惑
+    excited: '#FFDD00'      // 黄 - 興奮
+  };
+  return colors[state.emotionState] || '#00FF00';
+}
+
+// 感情ラベルを取得
+function getEmotionLabel() {
+  const labels = {
+    neutral: '😐 平静',
+    alert: '⚠️ 警戒',
+    confident: '😊 確信',
+    confused: '🤔 困惑',
+    excited: '😄 興奮'
+  };
+  return labels[state.emotionState] || '...';
+}
+
+// R2-D2スタイルの音声効果（イベント時）
+function playR2D2Sound(type) {
+  const soundPatterns = {
+    startup: [
+      { freq: 400, duration: 200 },
+      { freq: 600, duration: 150 },
+      { freq: 800, duration: 200 }
+    ],
+    success: [
+      { freq: 550, duration: 100 },
+      { freq: 770, duration: 100 },
+      { freq: 550, duration: 100 }
+    ],
+    error: [
+      { freq: 700, duration: 100 },
+      { freq: 400, duration: 100 },
+      { freq: 700, duration: 100 },
+      { freq: 400, duration: 100 }
+    ],
+    movement: [
+      { freq: 500, duration: 60 },
+      { freq: 700, duration: 60 }
+    ]
+  };
+  
+  const pattern = soundPatterns[type] || soundPatterns.movement;
+  
+  try {
+    const audioContext = window.audioContext || new (window.AudioContext || window.webkitAudioContext)();
+    window.audioContext = audioContext;
+    
+    let currentTime = audioContext.currentTime;
+    
+    pattern.forEach((sound) => {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = sound.freq;
+      oscillator.type = 'sine';
+      
+      const duration = sound.duration / 1000;
+      gainNode.gain.setValueAtTime(0.2, currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, currentTime + duration * 0.7);
+      gainNode.gain.setValueAtTime(0, currentTime + duration);
+      
+      oscillator.start(currentTime);
+      oscillator.stop(currentTime + duration);
+      
+      currentTime += duration + 0.03;
+    });
+  } catch (e) {
+    console.log('Audio not available');
+  }
 }
 
 async function askGemma(now) {
@@ -486,6 +671,7 @@ function animate(now) {
   runCV();
   runML();
   calculateSteering();  // ステアリング計算を追加
+  updateEmotionalState();  // 感情状態を更新
   
   if (state.mlEnabled) {
     askGemma(now);
@@ -505,8 +691,17 @@ function animate(now) {
   
   document.getElementById('speed-display').textContent = state.robotVLin.toFixed(2);
   
+  // UI更新
+  document.getElementById('emotion-display').textContent = getEmotionLabel();
+  
   drawSimulator();
   drawSteeringGauge();
+  drawEmotionGauge();
+  
+  // 定期的に感情音を再生（1秒ごと）
+  if (now % 1000 < 50) {
+    playEmotionSound();
+  }
   
   requestAnimationFrame(animate);
 }
@@ -563,6 +758,40 @@ function drawSteeringGauge() {
   ctx.fillText('右', w - 5, 14);
   ctx.textAlign = 'center';
   ctx.fillText('危険度マップ', w / 2, 14);
+}
+
+function drawEmotionGauge() {
+  const canvas = document.getElementById('emotion-gauge');
+  if (!canvas) return;
+  
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  
+  // 背景
+  ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
+  ctx.fillRect(0, 0, w, h);
+  
+  // 感情色の背景
+  const emotionColor = getEmotionColor();
+  ctx.fillStyle = emotionColor + '44';  // 半透明
+  ctx.fillRect(0, 0, w, h);
+  
+  // 感情インテンシティを示す矩形
+  const barWidth = w * state.emotionIntensity;
+  ctx.fillStyle = emotionColor;
+  ctx.fillRect(0, 0, barWidth, h);
+  
+  // 枠線
+  ctx.strokeStyle = emotionColor;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(0, 0, w, h);
+  
+  // ラベル
+  ctx.font = 'bold 14px monospace';
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.fillText(getEmotionLabel(), w / 2, h / 2 + 5);
 }
 
 function drawSimulator() {
