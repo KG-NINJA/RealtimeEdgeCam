@@ -569,71 +569,78 @@ function drawSimulator() {
   const canvas = document.getElementById('robot-sim');
   const ctx = canvas.getContext('2d');
   
+  const w = canvas.width;
+  const h = canvas.height;
+  
   ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
-  ctx.fillRect(0, 0, 280, 280);
+  ctx.fillRect(0, 0, w, h);
   
   ctx.strokeStyle = 'rgba(0, 255, 0, 0.1)';
   ctx.lineWidth = 1;
-  for (let i = 0; i <= 280; i += 28) {
+  const gridSize = Math.floor(w / 10);
+  for (let i = 0; i <= w; i += gridSize) {
     ctx.beginPath();
     ctx.moveTo(i, 0);
-    ctx.lineTo(i, 280);
+    ctx.lineTo(i, h);
     ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(0, i);
-    ctx.lineTo(280, i);
+    ctx.lineTo(w, i);
     ctx.stroke();
   }
   
-  ctx.font = 'bold 16px monospace';
+  ctx.font = `bold ${Math.max(10, w / 20)}px monospace`;
   ctx.fillStyle = '#0f0';
-  ctx.fillText('AI: ' + state.gemmaLastAction, 15, 30);
+  ctx.fillText('AI: ' + state.gemmaLastAction, w * 0.05, w * 0.1);
   
   ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-  ctx.fillRect(15, 45, 100, 20);
+  ctx.fillRect(w * 0.05, w * 0.15, w * 0.35, w * 0.08);
   ctx.strokeStyle = '#0f0';
-  ctx.strokeRect(15, 45, 100, 20);
+  ctx.strokeRect(w * 0.05, w * 0.15, w * 0.35, w * 0.08);
   
-  const fillWidth = (state.lastObstacleScore / 100) * 100;
+  const fillWidth = (state.lastObstacleScore / 100) * (w * 0.35);
   ctx.fillStyle = state.lastObstacleScore > 50 ? '#0f0' : state.lastObstacleScore > 20 ? '#ff0' : '#f00';
-  ctx.fillRect(15, 45, fillWidth, 20);
+  ctx.fillRect(w * 0.05, w * 0.15, fillWidth, w * 0.08);
   
-  ctx.font = '11px monospace';
+  ctx.font = `${Math.max(8, w / 25)}px monospace`;
   ctx.fillStyle = '#0f0';
-  ctx.fillText('距離: ' + state.lastObstacleScore, 20, 58);
+  ctx.fillText('距離: ' + state.lastObstacleScore, w * 0.07, w * 0.26);
+  
+  // スケール計算（キャンバスサイズに応じた座標変換）
+  const scale = w / 280;
   
   ctx.save();
-  ctx.translate(state.robotX, state.robotY);
+  ctx.translate(state.robotX * scale, state.robotY * scale);
   ctx.rotate(state.robotTheta);
   
   ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
   ctx.beginPath();
-  ctx.arc(0, 0, 12, 0, Math.PI * 2);
+  ctx.arc(0, 0, 12 * scale, 0, Math.PI * 2);
   ctx.fill();
   
   ctx.strokeStyle = '#0f0';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2 * scale;
   ctx.stroke();
   
   ctx.fillStyle = '#0f0';
   ctx.beginPath();
-  ctx.moveTo(0, -12);
-  ctx.lineTo(-6, 6);
-  ctx.lineTo(6, 6);
+  ctx.moveTo(0, -12 * scale);
+  ctx.lineTo(-6 * scale, 6 * scale);
+  ctx.lineTo(6 * scale, 6 * scale);
   ctx.closePath();
   ctx.fill();
   
   ctx.restore();
   
-  ctx.font = '10px monospace';
+  ctx.font = `${Math.max(8, w / 28)}px monospace`;
   ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
-  ctx.fillText('速度: ' + state.robotVLin.toFixed(2), 15, 270);
-  ctx.fillText('角速度: ' + state.robotVAng.toFixed(1), 120, 270);
+  ctx.fillText('速度: ' + state.robotVLin.toFixed(2), w * 0.05, h - w * 0.05);
+  ctx.fillText('角速度: ' + state.robotVAng.toFixed(1), w * 0.5, h - w * 0.05);
   
   if (!state.robotEnabled) {
     ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
-    ctx.font = 'bold 20px monospace';
-    ctx.fillText('STOPPED', 70, 140);
+    ctx.font = `bold ${Math.max(12, w / 15)}px monospace`;
+    ctx.fillText('STOPPED', w * 0.25, h * 0.5);
   }
 }
 
@@ -704,10 +711,52 @@ cv['onRuntimeInitialized'] = () => {
   navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
     video.srcObject = s;
     video.play();
+    
+    // iPhone SE などの小さい画面に対応
+    adjustSimulatorSize();
+    
     requestAnimationFrame(animate);
     console.log("System Ready - Press M to enable AI, R to enable Robot");
   });
 };
+
+function adjustSimulatorSize() {
+  const simCanvas = document.getElementById('robot-sim');
+  const isMobile = window.innerWidth < 768;
+  
+  if (!simCanvas) return;
+  
+  if (isMobile) {
+    // スマートフォン対応
+    const screenWidth = window.innerWidth;
+    const screenHeight = window.innerHeight;
+    
+    // カメラ: 60%, UI: 25%, ボタン: 15%
+    const availableHeight = screenHeight * 0.25;
+    const availableWidth = screenWidth;
+    
+    // 正方形を維持しながら、利用可能スペースに収める
+    const maxSize = Math.min(availableWidth * 0.4, availableHeight * 0.9);
+    
+    simCanvas.width = Math.floor(maxSize);
+    simCanvas.height = Math.floor(maxSize);
+    simCanvas.style.width = maxSize + 'px';
+    simCanvas.style.height = maxSize + 'px';
+    
+    console.log(`Simulator size: ${maxSize}px (Mobile)`);
+  } else {
+    // PC/タブレット対応
+    simCanvas.width = 280;
+    simCanvas.height = 280;
+    simCanvas.style.width = '280px';
+    simCanvas.style.height = '280px';
+  }
+}
+
+// ウィンドウリサイズ時にも調整
+window.addEventListener('resize', () => {
+  adjustSimulatorSize();
+});
 </script>
 
 </body>
