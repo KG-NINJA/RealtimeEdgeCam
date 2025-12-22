@@ -6,300 +6,183 @@
 <title>A-1 Robot Vision + Gemma Control</title>
 <style>
 * { box-sizing: border-box; }
-
-body {
-  margin: 0; padding: 0; background: #000; color: #0f0;
-  font-family: monospace; font-size: 12px; overflow: hidden;
-  width: 100vw; height: 100vh;
-}
-
+body { margin: 0; padding: 0; background: #000; color: #0f0; font-family: monospace; font-size: 12px; overflow: hidden; width: 100vw; height: 100vh; }
 #camera-feed { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 1; }
 #cv { display: block; width: 100%; height: 100%; }
 #video { position: fixed; left: -10000px; top: -10000px; width: 1px; height: 1px; opacity: 0; }
-
-#ui {
-  position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.95);
-  padding: 12px; border: 2px solid #0f0; color: #0f0;
-  max-width: 420px; max-height: 85vh; overflow-y: auto; z-index: 100;
-  box-shadow: 0 0 10px rgba(0,255,0,0.3);
-}
-
-#ui b { font-size: 14px; }
+#ui { position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.9); padding: 12px; border: 2px solid #0f0; color: #0f0; max-width: 420px; z-index: 100; box-shadow: 0 0 10px rgba(0,255,0,0.3); }
 .status-line { margin: 5px 0; padding: 3px 0; border-bottom: 1px solid #033; font-size: 11px; }
 .status-good { color: #0f0; }
 .status-warn { color: #ff0; }
 .status-bad { color: #f00; }
-.status-neutral { color: #aaa; }
-
-.controls { margin-top: 10px; padding-top: 10px; border-top: 1px solid #033; font-size: 11px; }
-
-.robot-sim {
-  position: fixed; bottom: 10px; right: 10px; border: 2px solid #0f0;
-  background: rgba(0,20,0,0.95); z-index: 50;
-  box-shadow: 0 0 10px rgba(0,255,0,0.2);
-}
-
-#fps-counter {
-  position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8);
-  padding: 5px 10px; border: 1px solid #0f0; color: #0f0; font-size: 11px; z-index: 40;
-}
-
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: #111; }
-::-webkit-scrollbar-thumb { background: #0f0; border-radius: 3px; }
+.robot-sim { position: fixed; bottom: 10px; right: 10px; border: 2px solid #0f0; background: rgba(0,15,0,0.95); z-index: 50; }
+#fps-counter { position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 5px; border: 1px solid #0f0; z-index: 40; }
 </style>
 </head>
 <body>
 
-<div id="camera-feed">
-  <canvas id="cv"></canvas>
-</div>
+<div id="camera-feed"><canvas id="cv"></canvas></div>
 
 <div id="ui">
-  <b>⚙️ A-1 Robot Vision System</b><br>
-  
-  <div class="status-line">
-    📷 Camera: <span id="camera-status" class="status-neutral">初期化中...</span>
-  </div>
-  
-  <div class="status-line">
-    🔍 Edge Detection: <span id="edge-status" class="status-neutral">待機中</span>
-  </div>
-  
-  <div class="status-line">
-    🤖 COCO-SSD: <span id="ml-status" class="status-warn">OFF (M で ON)</span>
-  </div>
-  
-  <div class="status-line">
-    📊 Obstacle Score: <span id="obs-score" class="status-warn">0.000</span>
-  </div>
-  
-  <div class="status-line">
-    💭 Gemma Status: <span id="gemma-status" class="status-neutral">待機中</span>
-  </div>
-  
-  <div class="status-line">
-    🚗 Robot Mode: <span id="robot-mode" class="status-warn">OFF</span>
-  </div>
-  
-  <div class="status-line">
-    📍 Last Decision: <span id="last-decision" class="status-neutral">-</span>
-  </div>
-
-  <div class="controls">
-    <b>⌨️ 操作キー:</b><br>
-    <span style="color: #0f0;">M</span> = ML ON/OFF<br>
-    <span style="color: #0f0;">R</span> = Robot ON/OFF<br>
-    <span style="color: #0f0;">O</span> = Auto/Manual<br>
-    <span style="color: #0f0;">X</span> = Emergency Stop<br>
-    <span style="color: #0f0;">D</span> = Edge Display<br>
-    <span style="color: #0f0;">Space</span> = Freeze<br>
-    <span style="color: #0f0;">W/A/S/D</span> = Manual<br>
-    <span style="color: #0f0;">G</span> = Ask Gemma (Manual)<br>
-    <span style="color: #ff0;">T</span> = Test Gemma (Mock)<br>
-  </div>
+  <b>⚙️ A-1 Robot Vision System</b>
+  <div class="status-line">📷 Camera: <span id="camera-status">初期化中...</span></div>
+  <div class="status-line">🤖 ML-SSD: <span id="ml-status" class="status-warn">OFF (Mキー)</span></div>
+  <div class="status-line">📊 Obstacle: <span id="obs-score">0.00</span></div>
+  <div class="status-line">💭 Gemma: <span id="gemma-status">STANDBY</span></div>
+  <div class="status-line">🚗 Robot: <span id="robot-mode" class="status-bad">OFF (Rキー)</span></div>
+  <div class="status-line">📍 Decision: <span id="last-decision" style="font-weight:bold;">-</span></div>
+  <div style="margin-top:10px; font-size:10px; color:#0a0;">[R] Robot ON/OFF | [M] ML ON/OFF | [G] Manual Ask</div>
 </div>
 
-<div id="fps-counter">
-  <span id="fps">FPS: 0</span>
-</div>
-
+<div id="fps-counter"><span id="fps">FPS: 0</span></div>
 <canvas id="robot-sim" class="robot-sim" width="240" height="240"></canvas>
-
 <video id="video" autoplay playsinline muted></video>
 
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 
 <script>
-/* ==================== グローバル状態 ==================== */
 const state = {
-  cvReady: false, procW: 320, procH: 240, videoW: 0, videoH: 0,
-  frozen: false, debugEdges: true, mlEnabled: false, mlReady: false,
-  mlLoading: false, mlInFlight: false, mlNextAtMs: 0, mlIntervalMs: 500,
-  mlMinScore: 0.5, mlLastClass: '', mlLastScore: 0, mlLastBox: null,
-  lastObstacleScore: 0, robotEnabled: false, robotAutoMode: true,
-  robotX: 120, robotY: 120, robotTheta: 0, robotVLin: 0, robotVAng: 0,
-  robotTrail: [], gemmaLastDecision: 'WAITING', gemmaNextAtMs: 0,
-  gemmaIntervalMs: 1500, // 自動実行時の間隔（1.5秒）
+  cvReady: false, procW: 320, procH: 240,
+  mlEnabled: false, mlReady: false, mlInFlight: false,
+  lastObstacleScore: 0, 
+  robotEnabled: false, robotX: 120, robotY: 120, robotTheta: 0,
+  robotVLin: 0, robotVAng: 0,
+  gemmaLastAction: 'WAITING', gemmaNextAt: 0
 };
-
-const ML_ALLOWED = new Set(['chair', 'couch', 'bed', 'dining table', 'tv', 'laptop', 'person', 'dog', 'cat']);
 
 const video = document.getElementById('video');
 const cvCanvas = document.getElementById('cv');
 
-function updateStatus(id, text, className) {
+function updateStatus(id, text, colorClass) {
   const el = document.getElementById(id);
-  if (el) { el.textContent = text; el.className = 'status-' + className; }
+  if (el) { el.textContent = text; if(colorClass) el.className = 'status-' + colorClass; }
 }
 
-/* ==================== カメラ・OpenCV初期化 ==================== */
-async function initCamera() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: 640, height: 480 } });
-    video.srcObject = stream;
-    return new Promise(r => video.onloadedmetadata = () => { video.play(); r(); });
-  } catch (e) { updateStatus('camera-status', 'Error', 'bad'); }
+/* --- Camera & OpenCV --- */
+async function init() {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  video.srcObject = stream;
+  video.onloadedmetadata = () => { video.play(); animate(); };
 }
 
-let procRGBA, gray, blur, edges, blurKSize, dilateKernel;
-function initOpenCV() {
-  if (!cv.Mat || video.videoWidth === 0) return;
-  state.videoW = video.videoWidth; state.videoH = video.videoHeight;
-  state.procH = Math.floor(320 / (state.videoW/state.videoH));
+let procRGBA, gray, blur, edges;
+function initCV() {
+  if (state.cvReady || video.videoWidth === 0) return;
+  state.procH = Math.floor(320 / (video.videoWidth/video.videoHeight));
   cvCanvas.width = 320; cvCanvas.height = state.procH;
   procRGBA = new cv.Mat(state.procH, 320, cv.CV_8UC4);
-  gray = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
-  blur = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
-  edges = new cv.Mat(state.videoH, state.videoW, cv.CV_8UC1);
-  blurKSize = new cv.Size(5, 5); dilateKernel = cv.Mat.ones(3, 3, cv.CV_8U);
+  gray = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC1);
   state.cvReady = true;
   updateStatus('camera-status', 'Ready', 'good');
 }
 
-/* ==================== CV/ML 実行ループ ==================== */
-const captureCanvas = document.createElement('canvas');
-let captureCtx = null;
+const capCanvas = document.createElement('canvas');
+// 🔴 willReadFrequently を true に設定して警告を解消
+const capCtx = capCanvas.getContext('2d', { willReadFrequently: true });
 
-function runCvOnce() {
-  if (!state.cvReady || state.frozen) return;
-  if (!captureCtx) captureCtx = captureCanvas.getContext('2d');
-  captureCanvas.width = video.videoWidth; captureCanvas.height = video.videoHeight;
-  captureCtx.drawImage(video, 0, 0);
-  let src = cv.matFromImageData(captureCtx.getImageData(0, 0, video.videoWidth, video.videoHeight));
+function runCV() {
+  if (!state.cvReady) return;
+  capCanvas.width = video.videoWidth; capCanvas.height = video.videoHeight;
+  capCtx.drawImage(video, 0, 0);
+  let src = cv.matFromImageData(capCtx.getImageData(0, 0, video.videoWidth, video.videoHeight));
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  cv.GaussianBlur(gray, blur, blurKSize, 1.1);
-  cv.Canny(blur, edges, 35, 95);
-  cv.resize(edges, procRGBA, new cv.Size(320, state.procH));
-  if (state.debugEdges) { cv.imshow(cvCanvas, procRGBA); drawMlOverlay(); }
+  cv.Canny(gray, gray, 50, 100);
+  cv.resize(gray, procRGBA, new cv.Size(320, state.procH));
+  cv.imshow(cvCanvas, procRGBA);
   src.delete();
 }
 
-function drawMlOverlay() {
-  if (!state.mlLastBox || state.mlLastScore < state.mlMinScore) return;
-  const ctx = cvCanvas.getContext('2d');
-  const b = state.mlLastBox;
-  ctx.strokeStyle = '#0f0'; ctx.lineWidth = 2;
-  ctx.strokeRect(b.x, b.y, b.w, b.h);
+/* --- ML (COCO-SSD) --- */
+async function loadML() {
+  updateStatus('ml-status', 'Loading...', 'warn');
+  const s1 = document.createElement('script'); s1.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs";
+  const s2 = document.createElement('script'); s2.src = "https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd";
+  document.head.appendChild(s1);
+  s1.onload = () => { document.head.appendChild(s2); s2.onload = async () => {
+    state.model = await cocoSsd.load();
+    state.mlReady = true;
+    updateStatus('ml-status', 'Ready', 'good');
+  };};
 }
 
-async function ensureCocoSsdLoaded() {
-  if (state.mlReady || state.mlLoading) return;
-  state.mlLoading = true; updateStatus('ml-status', 'Loading...', 'warn');
-  const scripts = ['https://cdn.jsdelivr.net/npm/@tensorflow/tfjs', 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd'];
-  for (let s of scripts) {
-    let script = document.createElement('script'); script.src = s;
-    await new Promise(r => { script.onload = r; document.head.appendChild(script); });
-  }
-  state.mlModel = await cocoSsd.load();
-  state.mlReady = true; state.mlLoading = false; updateStatus('ml-status', 'Ready', 'good');
-}
-
-async function runCocoOnce(now) {
-  if (!state.mlEnabled || !state.mlReady || state.mlInFlight || now < state.mlNextAtMs) return;
-  state.mlNextAtMs = now + state.mlIntervalMs; state.mlInFlight = true;
-  const grabCanvas = document.createElement('canvas');
-  grabCanvas.width = 320; grabCanvas.height = state.procH;
-  grabCanvas.getContext('2d').drawImage(video, 0, 0, 320, state.procH);
-  const preds = await state.mlModel.detect(grabCanvas);
-  let best = preds.find(p => ML_ALLOWED.has(p.class) && p.score > state.mlMinScore);
-  if (best) {
-    state.mlLastClass = best.class; state.mlLastScore = best.score;
-    state.mlLastBox = { x: best.bbox[0], y: best.bbox[1], w: best.bbox[2], h: best.bbox[3] };
-    state.lastObstacleScore = Math.round(best.score * 1000);
-    updateStatus('obs-score', (state.lastObstacleScore / 1000).toFixed(3), 'warn');
-  } else {
-    state.lastObstacleScore = 0; state.mlLastBox = null;
-  }
+async function runML(now) {
+  if (!state.mlEnabled || !state.mlReady || state.mlInFlight) return;
+  state.mlInFlight = true;
+  const preds = await state.model.detect(capCanvas);
+  let obj = preds.find(p => p.score > 0.5);
+  state.lastObstacleScore = obj ? Math.round(obj.score * 1000) : 0;
+  updateStatus('obs-score', (state.lastObstacleScore/1000).toFixed(3));
   state.mlInFlight = false;
 }
 
-/* ==================== Gemma 統合 (修正版) ==================== */
-async function askGemmaDecision(now) {
-  if (!state.robotEnabled || state.isGemmaThinking || now < state.gemmaNextAtMs) return;
-  state.isGemmaThinking = true;
-  state.gemmaNextAtMs = now + state.gemmaIntervalMs;
+/* --- Gemma AI Decision --- */
+async function askGemma(now) {
+  if (!state.robotEnabled || now < state.gemmaNextAt) return;
+  state.gemmaNextAt = now + 2000;
 
-  const sensorData = {
-    front_distance: Math.round((1.0 - (state.lastObstacleScore / 1000)) * 100),
-    speed: parseFloat(state.robotVLin.toFixed(2))
-  };
-
+  // 🔴 距離計算を反転（スコア高い = 障害物近い = 距離は小さい）
+  const dist = Math.max(0, 100 - Math.round(state.lastObstacleScore / 10));
+  
   updateStatus('gemma-status', 'Thinking...', 'warn');
   try {
     const res = await fetch('https://kgninja-functiongemmabotdemo-docker.hf.space/decide', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(sensorData)
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ front_distance: dist, speed: state.robotVLin })
     });
     const json = await res.json();
     const match = json.data[0].match(/\{.*\}/s);
     if (match) {
-      const decision = JSON.parse(match[0]);
-      state.gemmaLastDecision = (decision.action || 'STOP').toUpperCase();
-      document.getElementById('last-decision').textContent = state.gemmaLastDecision;
-      applyGemmaDecision(decision);
+      const d = JSON.parse(match[0]);
+      state.gemmaLastAction = (d.action || 'STOP').toUpperCase();
+      document.getElementById('last-decision').textContent = state.gemmaLastAction;
+      
+      // 挙動への反映
+      if (state.gemmaLastAction.includes('FORWARD')) { state.robotVLin = 0.6; state.robotVAng = 0; }
+      else if (state.gemmaLastAction.includes('LEFT')) { state.robotVLin = 0.1; state.robotVAng = 1.0; }
+      else if (state.gemmaLastAction.includes('RIGHT')) { state.robotVLin = 0.1; state.robotVAng = -1.0; }
+      else { state.robotVLin = 0; state.robotVAng = 0; }
+      
       updateStatus('gemma-status', 'Ready', 'good');
     }
   } catch (e) { updateStatus('gemma-status', 'Error', 'bad'); }
-  state.isGemmaThinking = false;
 }
 
-function applyGemmaDecision(d) {
-  const action = String(d.action).toLowerCase();
-  if (action.includes('forward')) sendRobotCommand(0.7, 0);
-  else if (action.includes('left')) sendRobotCommand(0.2, 1.2);
-  else if (action.includes('right')) sendRobotCommand(0.2, -1.2);
-  else emergencyStop();
-}
-
-/* ==================== ロボット制御・シミュレーター ==================== */
-function sendRobotCommand(lin, ang) { state.robotVLin = lin; state.robotVAng = ang; }
-function emergencyStop() { state.robotVLin = 0; state.robotVAng = 0; }
-
-function updateRobotSim(dt) {
-  if (!state.robotEnabled) return;
-  state.robotTheta += state.robotVAng * dt;
-  state.robotX += Math.cos(state.robotTheta) * state.robotVLin * dt * 80;
-  state.robotY += Math.sin(state.robotTheta) * state.robotVLin * dt * 80;
-  if (state.robotX < 0) state.robotX = 240; if (state.robotX > 240) state.robotX = 0;
-  if (state.robotY < 0) state.robotY = 240; if (state.robotY > 240) state.robotY = 0;
-}
-
-function drawRobotSim() {
+/* --- Simulator --- */
+function drawSim() {
   const ctx = document.getElementById('robot-sim').getContext('2d');
   ctx.fillStyle = '#001'; ctx.fillRect(0, 0, 240, 240);
-  // グリッド
-  ctx.strokeStyle = 'rgba(0,255,0,0.1)';
-  for(let i=0; i<240; i+=40){ ctx.strokeRect(i,0,1,240); ctx.strokeRect(0,i,240,1); }
   
-  // 🤖 AI思考表示 (HUD)
-  ctx.fillStyle = '#0f0'; ctx.font = 'bold 13px monospace';
-  ctx.fillText('AI: ' + state.gemmaLastDecision, 10, 25);
-  ctx.font = '10px monospace';
-  ctx.fillText('DIST: ' + Math.round((1.0 - state.lastObstacleScore/1000)*100), 10, 40);
+  // HUD
+  ctx.fillStyle = '#0f0'; ctx.font = 'bold 12px monospace';
+  ctx.fillText('AI: ' + state.gemmaLastAction, 10, 20);
+  ctx.fillText('DIST: ' + (100 - Math.round(state.lastObstacleScore/10)), 10, 35);
 
-  // ロボット
+  if (state.robotEnabled) {
+    state.robotTheta += state.robotVAng * 0.1;
+    state.robotX += Math.cos(state.robotTheta) * state.robotVLin * 5;
+    state.robotY += Math.sin(state.robotTheta) * state.robotVLin * 5;
+    if(state.robotX<0)state.robotX=240; if(state.robotX>240)state.robotX=0;
+    if(state.robotY<0)state.robotY=240; if(state.robotY>240)state.robotY=0;
+  }
+
   ctx.save(); ctx.translate(state.robotX, state.robotY); ctx.rotate(state.robotTheta);
-  ctx.strokeStyle = '#0f0'; ctx.lineWidth = 2; ctx.strokeRect(-8, -8, 16, 16);
-  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(12,0); ctx.stroke(); ctx.restore();
+  ctx.strokeStyle = '#0f0'; ctx.strokeRect(-8,-8,16,16); ctx.restore();
 }
 
-/* ==================== ループ・キー入力 ==================== */
+/* --- Main Loop --- */
 window.addEventListener('keydown', e => {
-  if (e.code === 'KeyM') { state.mlEnabled = !state.mlEnabled; if(state.mlEnabled) ensureCocoSsdLoaded(); }
-  if (e.code === 'KeyR') { state.robotEnabled = !state.robotEnabled; updateStatus('robot-mode', state.robotEnabled?'ON':'OFF', state.robotEnabled?'good':'warn'); }
-  if (e.code === 'KeyG') askGemmaDecision(performance.now());
+  if (e.code === 'KeyM') { state.mlEnabled = !state.mlEnabled; if(state.mlEnabled) loadML(); }
+  if (e.code === 'KeyR') { state.robotEnabled = !state.robotEnabled; updateStatus('robot-mode', state.robotEnabled?'ON':'OFF', state.robotEnabled?'good':'bad'); }
+  if (e.code === 'KeyG') state.gemmaNextAt = 0;
 });
 
 function animate(now) {
-  if (!state.cvReady && video.videoWidth > 0) initOpenCV();
-  runCvOnce(); runCocoOnce(now);
-  askGemmaDecision(now); // 自動ループ有効
-  updateRobotSim(0.1); drawRobotSim();
+  if (!state.cvReady) initCV();
+  runCV(); runML(now); askGemma(now); drawSim();
   requestAnimationFrame(animate);
 }
 
-cv['onRuntimeInitialized'] = async () => { await initCamera(); animate(0); };
+cv['onRuntimeInitialized'] = init;
 </script>
 </body>
 </html>
