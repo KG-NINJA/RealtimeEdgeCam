@@ -315,11 +315,11 @@ async function askGemma(now) {
         console.log("→ FORWARD");
       } else if (state.gemmaLastAction === 'turn_left') {
         state.targetVLin = 0.3;
-        state.targetVAng = 2.0; // 左回転
+        state.targetVAng = -2.0; // 左回転（符号反転）
         console.log("→ LEFT");
       } else if (state.gemmaLastAction === 'turn_right') {
         state.targetVLin = 0.3;
-        state.targetVAng = -2.0; // 右回転
+        state.targetVAng = 2.0; // 右回転（符号反転）
         console.log("→ RIGHT");
       } else {
         state.targetVLin = 0;
