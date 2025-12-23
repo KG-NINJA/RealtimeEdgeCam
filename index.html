@@ -257,9 +257,18 @@ body {
     <div style="font-weight: bold; margin-bottom: 8px;">🔊 Voice Control</div>
     
     <div class="status-line">
-      <span class="label">🤖 Robot Voice</span>
+      <span class="label">🤖 Voice Mode</span>
+      <span class="value" id="voice-mode-display">Salamander</span>
+    </div>
+    
+    <div class="status-line">
+      <span class="label">🎙️ Status</span>
       <span class="value" id="speech-status">Ready</span>
     </div>
+    
+    <button id="btn-toggle-voice-mode" class="voice-button" style="background: rgba(100, 0, 150, 0.3); border-color: #a0f; color: #a0f;">
+      🐉 Salamander Mode
+    </button>
     
     <button id="btn-toggle-voice" class="voice-button">
       🔊 Voice ON
@@ -294,11 +303,12 @@ body {
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 
 <script>
-// ===== Robot Speaker Class =====
+// ===== Robot Speaker Class (Salamander Style) =====
 class RobotSpeaker {
   constructor() {
     this.synth = window.speechSynthesis;
     this.isSpeaking = false;
+    this.voiceMode = 'salamander';  // 'normal' or 'salamander'
   }
   
   speak(text, options = {}) {
@@ -309,15 +319,24 @@ class RobotSpeaker {
     
     const utterance = new SpeechSynthesisUtterance(text);
     
-    // English settings
+    // Salamander voice settings: cold, precise, authoritative
     utterance.lang = 'en-US';
-    utterance.rate = options.rate || 0.8;      // Slow, robot-like
-    utterance.pitch = options.pitch || 1.5;    // High pitch
-    utterance.volume = options.volume || 1.0;
+    
+    if (this.voiceMode === 'salamander') {
+      // Salamander: Deep, measured, intimidating
+      utterance.rate = 0.7;       // Even slower
+      utterance.pitch = 0.6;      // Lower, more authoritative
+      utterance.volume = 1.0;     // Full volume
+    } else {
+      // Normal robot
+      utterance.rate = 0.8;
+      utterance.pitch = 1.5;
+      utterance.volume = 1.0;
+    }
     
     utterance.onstart = () => {
       this.isSpeaking = true;
-      console.log(`🤖 Robot speaking: ${text}`);
+      console.log(`🤖 [${this.voiceMode.toUpperCase()}] Speaking: ${text}`);
       document.getElementById('speech-status').textContent = 'Speaking...';
     };
     
@@ -341,6 +360,11 @@ class RobotSpeaker {
     this.isSpeaking = false;
     document.getElementById('speech-status').textContent = 'Stopped';
   }
+  
+  setVoiceMode(mode) {
+    this.voiceMode = mode;  // 'salamander' or 'normal'
+    console.log(`🎙️ Voice mode changed to: ${mode.toUpperCase()}`);
+  }
 }
 
 const speaker = new RobotSpeaker();
@@ -354,6 +378,7 @@ const state = {
   lastObstacleScore: 100,
   robotEnabled: false,
   voiceEnabled: true,
+  voiceMode: 'salamander',  // 'salamander' or 'normal'
   
   robotX: 140,
   robotY: 140,
@@ -537,12 +562,10 @@ async function askGemma(now) {
       speech = speechMap[action] || 'Executing action';
     }
     
-    // ✨ Robot voice output
+    // ✨ Robot voice output (with mode selection)
     if (state.voiceEnabled && speech) {
-      speaker.speak(speech, {
-        rate: 0.8,
-        pitch: 1.5
-      });
+      speaker.setVoiceMode(state.voiceMode);
+      speaker.speak(speech);
     }
     
     // Fallback logic if no action from API
@@ -810,11 +833,26 @@ document.getElementById('btn-robot')?.addEventListener('click', () => {
   }
 });
 
-document.getElementById('btn-voice')?.addEventListener('click', () => {
-  state.voiceEnabled = !state.voiceEnabled;
-  const btn = document.getElementById('btn-toggle-voice');
-  btn.textContent = state.voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
-  btn.classList.toggle('off');
+document.getElementById('btn-toggle-voice-mode')?.addEventListener('click', () => {
+  state.voiceMode = state.voiceMode === 'salamander' ? 'normal' : 'salamander';
+  speaker.setVoiceMode(state.voiceMode);
+  
+  const btn = document.getElementById('btn-toggle-voice-mode');
+  const display = document.getElementById('voice-mode-display');
+  
+  if (state.voiceMode === 'salamander') {
+    btn.textContent = '🐉 Salamander Mode';
+    btn.style.background = 'rgba(100, 0, 150, 0.3)';
+    btn.style.borderColor = '#a0f';
+    btn.style.color = '#a0f';
+    display.textContent = 'Salamander';
+  } else {
+    btn.textContent = '🤖 Normal Robot';
+    btn.style.background = 'rgba(0, 150, 0, 0.3)';
+    btn.style.borderColor = '#0f0';
+    btn.style.color = '#0f0';
+    display.textContent = 'Normal';
+  }
 });
 
 document.getElementById('btn-toggle-voice')?.addEventListener('click', () => {
