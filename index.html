@@ -33,7 +33,7 @@ body {
     border: 2px solid #0f0; 
     z-index: 100;
     min-width: 280px;
-    max-height: 300px;
+    max-height: 450px;
     overflow-y: auto;
     box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
   }
@@ -51,7 +51,7 @@ body {
   
   #steer-gauge {
     position: fixed;
-    top: 340px;
+    top: 475px;
     left: 15px;
     width: 280px;
     height: 30px;
@@ -187,6 +187,36 @@ body {
   padding: 0 8px;
   text-align: right;
 }
+
+.voice-button {
+  width: 100%;
+  padding: 8px;
+  margin-top: 8px;
+  border: 1px solid #0f0;
+  background: rgba(0, 150, 0, 0.3);
+  color: #0f0;
+  font-weight: bold;
+  cursor: pointer;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.voice-button:hover {
+  background: rgba(0, 200, 0, 0.4);
+}
+
+.voice-button:active {
+  background: rgba(0, 255, 0, 0.2);
+}
+
+.voice-button.off {
+  background: rgba(150, 0, 0, 0.2);
+  border-color: #f00;
+  color: #f00;
+}
+
 #video { position: fixed; left: -10000px; opacity: 0; }
 </style>
 </head>
@@ -199,53 +229,123 @@ body {
     ⚙️ A-1 ROBOT VISION
   </div>
   <div class="status-line">
-    <span class="label">🎯 障害物距離</span>
+    <span class="label">🎯 Obstacle Distance</span>
     <span class="value" id="obs-score">100</span>
   </div>
   <div class="status-line">
-    <span class="label">🧠 Gemma思考</span>
-    <span class="value" id="gemma-status">待機中</span>
+    <span class="label">🧠 Gemma Brain</span>
+    <span class="value" id="gemma-status">Ready</span>
   </div>
   <div class="status-line">
-    <span class="label">🤖 ロボット状態</span>
-    <span class="value" id="robot-mode" style="color:#f00">停止中</span>
+    <span class="label">🤖 Robot Status</span>
+    <span class="value" id="robot-mode" style="color:#f00">Stopped</span>
   </div>
   <div class="status-line">
-    <span class="label">📍 現在の指示</span>
+    <span class="label">📍 Last Command</span>
     <span class="value" id="last-decision">-</span>
   </div>
   <div class="status-line">
-    <span class="label">⚡ 速度</span>
+    <span class="label">⚡ Velocity</span>
     <span class="value" id="speed-display">0.0</span>
   </div>
   <div class="status-line">
-    <span class="label">🎯 ステアリング</span>
-    <span class="value" id="steer-display">→ 中立</span>
+    <span class="label">🎯 Steering</span>
+    <span class="value" id="steer-display">→ Neutral</span>
+  </div>
+  
+  <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #033;">
+    <div style="font-weight: bold; margin-bottom: 8px;">🔊 Voice Control</div>
+    
+    <div class="status-line">
+      <span class="label">🤖 Robot Voice</span>
+      <span class="value" id="speech-status">Ready</span>
+    </div>
+    
+    <button id="btn-toggle-voice" class="voice-button">
+      🔊 Voice ON
+    </button>
+    
+    <button id="btn-stop-voice" class="voice-button">
+      ⏸ Stop Voice
+    </button>
   </div>
 </div>
 
 <canvas id="steer-gauge" width="280" height="30"></canvas>
 
 <div id="keys-info">
-  <div style="font-weight: bold; margin-bottom: 5px;">操作キー</div>
-  <div>M キー: AI認識 ON/OFF</div>
-  <div>R キー: ロボット動作 ON/OFF</div>
+  <div style="font-weight: bold; margin-bottom: 5px;">Controls</div>
+  <div>M key: AI ON/OFF</div>
+  <div>R key: Robot ON/OFF</div>
+  <div>V key: Voice ON/OFF</div>
 </div>
 
 <canvas id="robot-sim" class="robot-sim" width="280" height="280"></canvas>
 <video id="video" autoplay playsinline muted></video>
 
-<!-- スマートフォン用タッチコントロール -->
+<!-- Touch Controls -->
 <div id="touch-controls">
   <button class="touch-btn" id="btn-ai">🧠 AI</button>
-  <button class="touch-btn" id="btn-robot">🤖 動作</button>
-  <button class="touch-btn" id="btn-camera">📹</button>
+  <button class="touch-btn" id="btn-robot">🤖 Motion</button>
+  <button class="touch-btn" id="btn-voice">🔊 Voice</button>
   <button class="touch-btn" id="btn-info">ℹ️</button>
 </div>
 
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 
 <script>
+// ===== Robot Speaker Class =====
+class RobotSpeaker {
+  constructor() {
+    this.synth = window.speechSynthesis;
+    this.isSpeaking = false;
+  }
+  
+  speak(text, options = {}) {
+    // Cancel any ongoing speech
+    if (this.isSpeaking) {
+      this.synth.cancel();
+    }
+    
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // English settings
+    utterance.lang = 'en-US';
+    utterance.rate = options.rate || 0.8;      // Slow, robot-like
+    utterance.pitch = options.pitch || 1.5;    // High pitch
+    utterance.volume = options.volume || 1.0;
+    
+    utterance.onstart = () => {
+      this.isSpeaking = true;
+      console.log(`🤖 Robot speaking: ${text}`);
+      document.getElementById('speech-status').textContent = 'Speaking...';
+    };
+    
+    utterance.onend = () => {
+      this.isSpeaking = false;
+      console.log('✓ Speech complete');
+      document.getElementById('speech-status').textContent = 'Ready';
+    };
+    
+    utterance.onerror = (e) => {
+      console.error('Speech error:', e);
+      this.isSpeaking = false;
+      document.getElementById('speech-status').textContent = 'Error';
+    };
+    
+    this.synth.speak(utterance);
+  }
+  
+  stop() {
+    this.synth.cancel();
+    this.isSpeaking = false;
+    document.getElementById('speech-status').textContent = 'Stopped';
+  }
+}
+
+const speaker = new RobotSpeaker();
+
+// ===== Main State =====
 const state = {
   cvReady: false,
   mlReady: false,
@@ -253,6 +353,7 @@ const state = {
   mlInFlight: false,
   lastObstacleScore: 100,
   robotEnabled: false,
+  voiceEnabled: true,
   
   robotX: 140,
   robotY: 140,
@@ -287,11 +388,11 @@ async function loadML() {
     }
     state.model = await cocoSsd.load();
     state.mlReady = true;
-    document.getElementById('gemma-status').textContent = '準備完了';
+    document.getElementById('gemma-status').textContent = 'Ready';
     console.log("ML Model Ready");
   } catch (e) {
     console.error("ML Load Error:", e);
-    document.getElementById('gemma-status').textContent = 'エラー';
+    document.getElementById('gemma-status').textContent = 'Error';
   }
 }
 
@@ -379,11 +480,11 @@ function calculateSteering() {
   const mid = (steeringGradient.columns.length - 1) / 2;
   state.steerValue = (minIdx - mid) / mid;
   
-  let steerLabel = '→ 中立';
+  let steerLabel = '→ Neutral';
   if (state.steerValue < -0.3) {
-    steerLabel = '← 左危険';
+    steerLabel = '← Left';
   } else if (state.steerValue > 0.3) {
-    steerLabel = '右危険 →';
+    steerLabel = 'Right →';
   }
   document.getElementById('steer-display').textContent = steerLabel;
 }
@@ -393,7 +494,7 @@ async function askGemma(now) {
   
   state.gemmaThinking = true;
   state.gemmaNextAt = now + 2500;
-  document.getElementById('gemma-status').textContent = '思考中...';
+  document.getElementById('gemma-status').textContent = 'Thinking...';
   
   const distance = state.lastObstacleScore;
   console.log("Distance:", distance);
@@ -413,16 +514,38 @@ async function askGemma(now) {
     console.log("API Response:", json);
     
     let action = null;
+    let speech = null;
     
     if (json.data && json.data[0]) {
       const match = json.data[0].match(/\{.*\}/s);
       if (match) {
         const d = JSON.parse(match[0]);
         action = (d.action || '').toLowerCase();
-        console.log("Parsed action:", action);
+        speech = d.speech;
+        console.log("Parsed action:", action, "Speech:", speech);
       }
     }
     
+    // Fallback speech if not provided
+    if (!speech) {
+      const speechMap = {
+        'move_forward': 'Moving forward',
+        'turn_left': 'Turning left to avoid obstacle',
+        'turn_right': 'Turning right to avoid obstacle',
+        'stop': 'Critical obstacle detected. Stopping.'
+      };
+      speech = speechMap[action] || 'Executing action';
+    }
+    
+    // ✨ Robot voice output
+    if (state.voiceEnabled && speech) {
+      speaker.speak(speech, {
+        rate: 0.8,
+        pitch: 1.5
+      });
+    }
+    
+    // Fallback logic if no action from API
     if (!action) {
       console.warn("⚠️ API invalid, using fallback logic");
       if (distance < 30) {
@@ -438,7 +561,7 @@ async function askGemma(now) {
     
     state.gemmaLastAction = action.toUpperCase().replace('_', ' ');
     document.getElementById('last-decision').textContent = state.gemmaLastAction;
-    document.getElementById('gemma-status').textContent = '完了 ✓';
+    document.getElementById('gemma-status').textContent = 'Complete ✓';
     
     if (action === 'move_forward') {
       state.targetVLin = 0.8;
@@ -460,7 +583,13 @@ async function askGemma(now) {
     
   } catch (e) {
     console.error("Gemma API Error:", e);
-    document.getElementById('gemma-status').textContent = 'API失敗';
+    document.getElementById('gemma-status').textContent = 'API Error';
+    
+    // Fallback voice
+    if (state.voiceEnabled) {
+      speaker.speak('Error. Stopping.');
+    }
+    
     state.targetVLin = 0;
     state.targetVAng = 0;
   } finally {
@@ -544,9 +673,9 @@ function drawSteeringGauge() {
   ctx.font = '9px monospace';
   ctx.fillStyle = '#0f0';
   ctx.textAlign = 'left';
-  ctx.fillText('左', 3, 12);
+  ctx.fillText('Left', 3, 12);
   ctx.textAlign = 'right';
-  ctx.fillText('右', w - 3, 12);
+  ctx.fillText('Right', w - 3, 12);
 }
 
 function drawSimulator() {
@@ -584,7 +713,7 @@ function drawSimulator() {
   
   ctx.font = '11px monospace';
   ctx.fillStyle = '#0f0';
-  ctx.fillText('距離: ' + state.lastObstacleScore, 20, 58);
+  ctx.fillText('Distance: ' + state.lastObstacleScore, 20, 58);
   
   ctx.save();
   ctx.translate(state.robotX, state.robotY);
@@ -611,8 +740,8 @@ function drawSimulator() {
   
   ctx.font = '10px monospace';
   ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
-  ctx.fillText('速度: ' + state.robotVLin.toFixed(2), 15, 270);
-  ctx.fillText('角速度: ' + state.robotVAng.toFixed(1), 120, 270);
+  ctx.fillText('Velocity: ' + state.robotVLin.toFixed(2), 15, 270);
+  ctx.fillText('Angular: ' + state.robotVAng.toFixed(1), 120, 270);
   
   if (!state.robotEnabled) {
     ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
@@ -621,14 +750,15 @@ function drawSimulator() {
   }
 }
 
+// ===== Keyboard Controls =====
 window.addEventListener('keydown', e => {
   if (e.code === 'KeyM') {
     state.mlEnabled = !state.mlEnabled;
     if (state.mlEnabled) {
       loadML();
-      document.getElementById('gemma-status').textContent = '読み込み中...';
+      document.getElementById('gemma-status').textContent = 'Loading...';
     } else {
-      document.getElementById('gemma-status').textContent = '無効';
+      document.getElementById('gemma-status').textContent = 'Disabled';
       document.getElementById('last-decision').textContent = '-';
     }
   }
@@ -636,7 +766,7 @@ window.addEventListener('keydown', e => {
   if (e.code === 'KeyR') {
     state.robotEnabled = !state.robotEnabled;
     const modeEl = document.getElementById('robot-mode');
-    modeEl.textContent = state.robotEnabled ? '稼働中' : '停止中';
+    modeEl.textContent = state.robotEnabled ? 'Running' : 'Stopped';
     modeEl.style.color = state.robotEnabled ? '#0f0' : '#f00';
     
     if (!state.robotEnabled) {
@@ -646,22 +776,30 @@ window.addEventListener('keydown', e => {
       state.robotVAng = 0;
     }
   }
+  
+  if (e.code === 'KeyV') {
+    state.voiceEnabled = !state.voiceEnabled;
+    const btn = document.getElementById('btn-toggle-voice');
+    btn.textContent = state.voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
+    btn.classList.toggle('off');
+  }
 });
 
+// ===== Touch Button Controls =====
 document.getElementById('btn-ai')?.addEventListener('click', () => {
   state.mlEnabled = !state.mlEnabled;
   if (state.mlEnabled) {
     loadML();
-    document.getElementById('gemma-status').textContent = '読み込み中...';
+    document.getElementById('gemma-status').textContent = 'Loading...';
   } else {
-    document.getElementById('gemma-status').textContent = '無効';
+    document.getElementById('gemma-status').textContent = 'Disabled';
   }
 });
 
 document.getElementById('btn-robot')?.addEventListener('click', () => {
   state.robotEnabled = !state.robotEnabled;
   const modeEl = document.getElementById('robot-mode');
-  modeEl.textContent = state.robotEnabled ? '稼働中' : '停止中';
+  modeEl.textContent = state.robotEnabled ? 'Running' : 'Stopped';
   modeEl.style.color = state.robotEnabled ? '#0f0' : '#f00';
   
   if (!state.robotEnabled) {
@@ -672,8 +810,22 @@ document.getElementById('btn-robot')?.addEventListener('click', () => {
   }
 });
 
-document.getElementById('btn-camera')?.addEventListener('click', () => {
-  state.debugEdges = !state.debugEdges;
+document.getElementById('btn-voice')?.addEventListener('click', () => {
+  state.voiceEnabled = !state.voiceEnabled;
+  const btn = document.getElementById('btn-toggle-voice');
+  btn.textContent = state.voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
+  btn.classList.toggle('off');
+});
+
+document.getElementById('btn-toggle-voice')?.addEventListener('click', () => {
+  state.voiceEnabled = !state.voiceEnabled;
+  const btn = document.getElementById('btn-toggle-voice');
+  btn.textContent = state.voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
+  btn.classList.toggle('off');
+});
+
+document.getElementById('btn-stop-voice')?.addEventListener('click', () => {
+  speaker.stop();
 });
 
 let showInfo = false;
@@ -691,7 +843,7 @@ cv['onRuntimeInitialized'] = () => {
     adjustSimulatorSize();
     
     requestAnimationFrame(animate);
-    console.log("System Ready - Press M to enable AI, R to enable Robot");
+    console.log("System Ready - Press M for AI, R for Robot, V for Voice");
   });
 };
 
