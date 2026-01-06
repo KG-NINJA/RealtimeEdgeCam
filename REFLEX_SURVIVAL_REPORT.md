@@ -24,6 +24,7 @@
 
 ### 安定性チャート
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'pie1': '#00E676', 'pie2': '#FF1744', 'pieTxt': '#fff', 'pieStrokeWidth': '2px', 'pieOuterStrokeWidth': '5px' }}}%%
 pie title Survival Test Success Rate (n=569)
     "Success (Safe Halt/Normal)" : 569
     "Failure (System Crash)" : 0
