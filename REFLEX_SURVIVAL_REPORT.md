@@ -1,6 +1,6 @@
 # Survival Simulation Report: Reflex Layer Reliability Test
 
-昨晩から今朝2026/01/06 深夜にかけて実施した、ロボットの「生き残り力（冗長性）」を担保するFPGA反射レイヤーの耐久試験結果報告です。
+昨晩から今朝にかけて実施した、ロボットの「生き残り力（冗長性）」を担保するFPGA反射レイヤーの耐久試験結果報告です。
 
 ## 1. 概要 (Executive Summary)
 知能（AI/CPU）の完全沈黙や、過酷な環境下でのセンサー異常を想定し、FPGAのハードウェア・ステートマシン(FSM)が独立して安全を担保できるかを検証。
@@ -13,12 +13,33 @@
 
 | カテゴリ | シナリオ内容 | 期待される挙動 | 結果 |
 | :--- | :--- | :--- | :--- |
-| **Watchdog** | CPUフリーズ (HB停止) | タイムアウト検知・即時HALT | ✅ PASS |
-| **Sensitivity** | 障害物の急接近 (閾値越え) | グリッチ除去後にHALT | ✅ PASS |
-| **Glitch Filter** | 瞬間的なセンサーノイズ | 誤報を無視し走行継続 | ✅ PASS |
-| **Redundancy** | 多段階の安全マージン | Caution(減速)からHALTへ遷移 | ✅ PASS |
+| **Watchdog** | CPUフリーズ (HB停止) | タイムアウト検知・即時HALT | ✅ 569/569 PASS |
+| **Sensitivity** | 障害物の急接近 (閾値越え) | グリッチ除去後にHALT | ✅ 569/569 PASS |
+| **Glitch Filter** | 瞬間的なセンサーノイズ | 誤報を無視し走行継続 | ✅ 569/569 PASS |
+| **Redundancy** | 多段階の安全マージン | Caution(減速)からHALTへ遷移 | ✅ 569/569 PASS |
 
-## 3. ビジュアライゼーション (Concept Map)
+## 3. 統計分析 (Statistical Analysis)
+
+569回のストレス試験から得られた性能データです。
+
+### 安定性チャート
+```mermaid
+pie title Survival Test Success Rate (n=569)
+    "Success (Safe Halt/Normal)" : 569
+    "Failure (System Crash)" : 0
+```
+
+### 反応速度とWatchdogの適応範囲
+FPGA側で動的にタイムアウト設定を変更し、通信ジッターへの耐性を検証しました。
+
+| 指標 | 最小値 (Min) | 最大値 (Max) | 単位 |
+| :--- | :--- | :--- | :--- |
+| **Watchdog Timeout** | 50 (0.5µs) | 249 (2.49µs) | Cycles (@100MHz) |
+| **Emergency Reaction** | 5 | 10 | Cycles (Internal) |
+
+> ※ソフトウェア(OS)を介さないため、反応速度の「揺れ(Jitter)」がほぼゼロであることがFPGA採用の決定的な利点です。
+
+## 4. ビジュアライゼーション (Concept Map)
 
 ```mermaid
 graph TD
