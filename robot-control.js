@@ -48,6 +48,11 @@ function init() {
   capCanvas.width = w;
   capCanvas.height = h;
 
+  src = new cv.Mat(h, w, cv.CV_8UC4);
+  gray = new cv.Mat(h, w, cv.CV_8UC1);
+  edge = new cv.Mat(h, w, cv.CV_8UC1);
+  edgeRGBA = new cv.Mat(h, w, cv.CV_8UC4);
+
   // [NEW] Load Distilled Reflex Policy
   fetch('reflex-policy.json')
     .then(res => res.json())

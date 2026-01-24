@@ -5,7 +5,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>A-1 Robot Vision - Smooth Control</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <style>
     * {
       box-sizing: border-box;
@@ -290,579 +289,548 @@
     </div>
     <div class="status-line">
       <span class="label">🎯 Steering</span>
-      <div class="status-line" style="border-top: 1px solid #144; padding-top: 5px;">
-        <span class="label">🛡️ Reflex State</span>
-        <span class="value" id="reflex-status-text" style="color:#0f0">NORMAL</span>
+      <span class="value" id="steer-display">→ Neutral</span>
+    </div>
+    <div class="status-line" style="border-top: 1px solid #144; padding-top: 5px;">
+      <span class="label">🛡️ Reflex State</span>
+      <span class="value" id="reflex-status-text" style="color:#0f0">NORMAL</span>
+    </div>
+
+    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #033;">
+      <div style="font-weight: bold; margin-bottom: 8px;">🔊 Voice Control</div>
+
+      <div class="status-line">
+        <span class="label">🤖 Voice Mode</span>
+        <span class="value" id="voice-mode-display">Salamander</span>
       </div>
 
-      <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #033;">
-        <div style="font-weight: bold; margin-bottom: 8px;">🔊 Voice Control</div>
-
-        <div class="status-line">
-          <span class="label">🤖 Voice Mode</span>
-          <span class="value" id="voice-mode-display">Salamander</span>
-        </div>
-
-        <div class="status-line">
-          <span class="label">🎙️ Status</span>
-          <span class="value" id="speech-status">Ready</span>
-        </div>
-
-        <button id="btn-toggle-voice-mode" class="voice-button"
-          style="background: rgba(100, 0, 150, 0.3); border-color: #a0f; color: #a0f;">
-          🐉 Salamander Mode
-        </button>
-
-        <button id="btn-toggle-voice" class="voice-button">
-          🔊 Voice ON
-        </button>
-
-        <button id="btn-stop-voice" class="voice-button">
-          ⏸ Stop Voice
-        </button>
+      <div class="status-line">
+        <span class="label">🎙️ Status</span>
+        <span class="value" id="speech-status">Ready</span>
       </div>
+
+      <button id="btn-toggle-voice-mode" class="voice-button"
+        style="background: rgba(100, 0, 150, 0.3); border-color: #a0f; color: #a0f;">
+        🐉 Salamander Mode
+      </button>
+
+      <button id="btn-toggle-voice" class="voice-button">
+        🔊 Voice ON
+      </button>
+
+      <button id="btn-stop-voice" class="voice-button">
+        ⏸ Stop Voice
+      </button>
     </div>
+  </div>
 
-    <canvas id="steer-gauge" width="280" height="30"></canvas>
+  <canvas id="steer-gauge" width="280" height="30"></canvas>
 
-    <div id="keys-info">
-      <div style="font-weight: bold; margin-bottom: 5px;">Controls</div>
-      <div>M key: AI ON/OFF</div>
-      <div>R key: Robot ON/OFF</div>
-      <div>V key: Voice ON/OFF</div>
-    </div>
+  <div id="keys-info">
+    <div style="font-weight: bold; margin-bottom: 5px;">Controls</div>
+    <div>M key: AI ON/OFF</div>
+    <div>R key: Robot ON/OFF</div>
+    <div>V key: Voice ON/OFF</div>
+  </div>
 
-    <canvas id="robot-sim" class="robot-sim" width="280" height="280"></canvas>
-    <video id="video" autoplay playsinline muted></video>
+  <canvas id="robot-sim" class="robot-sim" width="280" height="280"></canvas>
+  <video id="video" autoplay playsinline muted></video>
 
-    <!-- Touch Controls -->
-    <div id="touch-controls">
-      <button class="touch-btn" id="btn-ai">🧠 AI</button>
-      <button class="touch-btn" id="btn-robot">🤖 Motion</button>
-      <button class="touch-btn" id="btn-voice">🔊 Voice</button>
-      <button class="touch-btn" id="btn-info">ℹ️</button>
-    </div>
+  <!-- Touch Controls -->
+  <div id="touch-controls">
+    <button class="touch-btn" id="btn-ai">🧠 AI</button>
+    <button class="touch-btn" id="btn-robot">🤖 Motion</button>
+    <button class="touch-btn" id="btn-voice">🔊 Voice</button>
+    <button class="touch-btn" id="btn-info">ℹ️</button>
+  </div>
 
-    <script src="https://docs.opencv.org/4.x/opencv.js"></script>
+  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 
-    <script>
-      // ===== Robot Speaker Class (Salamander Style) =====
-      class RobotSpeaker {
-        constructor() {
-          this.synth = window.speechSynthesis;
-          this.isSpeaking = false;
-          this.voiceMode = 'salamander';  // 'normal' or 'salamander'
-        }
+  <script>
+    // ===== Robot Speaker Class (Salamander Style) =====
+    class RobotSpeaker {
+      constructor() {
+        this.synth = window.speechSynthesis;
+        this.isSpeaking = false;
+        this.voiceMode = 'salamander';  // 'normal' or 'salamander'
+      }
 
-        speak(text, options = {}) {
-          // Cancel any ongoing speech
-          if (this.isSpeaking) {
-            this.synth.cancel();
-          }
-
-          const utterance = new SpeechSynthesisUtterance(text);
-
-          // Salamander voice settings: cold, precise, authoritative
-          utterance.lang = 'en-US';
-
-          if (this.voiceMode === 'salamander') {
-            // Salamander: Deep, measured, intimidating
-            utterance.rate = 0.7;       // Even slower
-            utterance.pitch = 0.6;      // Lower, more authoritative
-            utterance.volume = 1.0;     // Full volume
-          } else {
-            // Normal robot
-            utterance.rate = 0.8;
-            utterance.pitch = 1.5;
-            utterance.volume = 1.0;
-          }
-
-          utterance.onstart = () => {
-            this.isSpeaking = true;
-            console.log(`🤖 [${this.voiceMode.toUpperCase()}] Speaking: ${text}`);
-            document.getElementById('speech-status').textContent = 'Speaking...';
-          };
-
-          utterance.onend = () => {
-            this.isSpeaking = false;
-            console.log('✓ Speech complete');
-            document.getElementById('speech-status').textContent = 'Ready';
-          };
-
-          utterance.onerror = (e) => {
-            console.error('Speech error:', e);
-            this.isSpeaking = false;
-            document.getElementById('speech-status').textContent = 'Error';
-          };
-
-          this.synth.speak(utterance);
-        }
-
-        stop() {
+      speak(text, options = {}) {
+        // Cancel any ongoing speech
+        if (this.isSpeaking) {
           this.synth.cancel();
+        }
+
+        const utterance = new SpeechSynthesisUtterance(text);
+
+        // Salamander voice settings: cold, precise, authoritative
+        utterance.lang = 'en-US';
+
+        if (this.voiceMode === 'salamander') {
+          // Salamander: Deep, measured, intimidating
+          utterance.rate = 0.7;       // Even slower
+          utterance.pitch = 0.6;      // Lower, more authoritative
+          utterance.volume = 1.0;     // Full volume
+        } else {
+          // Normal robot
+          utterance.rate = 0.8;
+          utterance.pitch = 1.5;
+          utterance.volume = 1.0;
+        }
+
+        utterance.onstart = () => {
+          this.isSpeaking = true;
+          console.log(`🤖 [${this.voiceMode.toUpperCase()}] Speaking: ${text}`);
+          document.getElementById('speech-status').textContent = 'Speaking...';
+        };
+
+        utterance.onend = () => {
           this.isSpeaking = false;
-          document.getElementById('speech-status').textContent = 'Stopped';
+          console.log('✓ Speech complete');
+          document.getElementById('speech-status').textContent = 'Ready';
+        };
+
+        utterance.onerror = (e) => {
+          console.error('Speech error:', e);
+          this.isSpeaking = false;
+          document.getElementById('speech-status').textContent = 'Error';
+        };
+
+        this.synth.speak(utterance);
+      }
+
+      stop() {
+        this.synth.cancel();
+        this.isSpeaking = false;
+        document.getElementById('speech-status').textContent = 'Stopped';
+      }
+
+      setVoiceMode(mode) {
+        this.voiceMode = mode;  // 'salamander' or 'normal'
+        console.log(`🎙️ Voice mode changed to: ${mode.toUpperCase()}`);
+      }
+    }
+
+    const speaker = new RobotSpeaker();
+
+    // ===== Main State =====
+    const state = {
+      cvReady: false,
+      mlReady: false,
+      mlEnabled: false,
+      mlInFlight: false,
+      lastObstacleScore: 100,
+      robotEnabled: false,
+      voiceEnabled: true,
+      voiceMode: 'salamander',  // 'salamander' or 'normal'
+
+      robotX: 140,
+      robotY: 140,
+      robotTheta: 0,
+      robotVLin: 0,
+      robotVAng: 0,
+      targetVLin: 0,
+      targetVAng: 0,
+
+      gemmaLastAction: 'WAITING',
+      gemmaNextAt: 0,
+      gemmaThinking: false,
+
+      steerValue: 0,
+      steerNextAt: 0
+    };
+
+    const video = document.getElementById('video');
+    const cvCanvas = document.getElementById('cv');
+
+    async function loadML() {
+      if (window.tf && window.cocoSsd) return;
+
+      console.log("Loading TensorFlow.js...");
+
+      try {
+        if (!window.tf) {
+          await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0");
+        }
+        if (!window.cocoSsd) {
+          await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3");
+        }
+        state.model = await cocoSsd.load();
+        state.mlReady = true;
+        document.getElementById('gemma-status').textContent = 'Ready';
+        console.log("ML Model Ready");
+      } catch (e) {
+        console.error("ML Load Error:", e);
+        document.getElementById('gemma-status').textContent = 'Error';
+      }
+    }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+
+    const capCanvas = document.createElement('canvas');
+    const capCtx = capCanvas.getContext('2d', { willReadFrequently: true });
+
+    function runCV() {
+      if (!state.cvReady || !video.videoWidth) return;
+
+      capCanvas.width = video.videoWidth;
+      capCanvas.height = video.videoHeight;
+      capCtx.drawImage(video, 0, 0);
+
+      let src = cv.matFromImageData(capCtx.getImageData(0, 0, video.videoWidth, video.videoHeight));
+      let gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      cv.Canny(gray, gray, 50, 100);
+      cv.imshow(cvCanvas, gray);
+
+      src.delete();
+      gray.delete();
+    }
+
+    async function runML() {
+      if (!state.mlEnabled || !state.mlReady || state.mlInFlight) return;
+
+      state.mlInFlight = true;
+
+      try {
+        const preds = await state.model.detect(capCanvas);
+
+        if (preds.length > 0) {
+          let obj = preds.sort((a, b) => b.score - a.score)[0];
+          state.lastObstacleScore = Math.max(5, Math.min(100, Math.round(obj.score * 100)));
+        } else {
+          state.lastObstacleScore = 100;
         }
 
-        setVoiceMode(mode) {
-          this.voiceMode = mode;  // 'salamander' or 'normal'
-          console.log(`🎙️ Voice mode changed to: ${mode.toUpperCase()}`);
+        document.getElementById('obs-score').textContent = state.lastObstacleScore;
+
+      } catch (e) {
+        console.error("ML Error:", e);
+      } finally {
+        state.mlInFlight = false;
+      }
+    }
+
+    const steeringGradient = {
+      columns: new Float32Array(9),
+      bestSteer: 0
+    };
+
+    function calculateSteering() {
+      const now = performance.now();
+
+      if (now < state.steerNextAt) return;
+      state.steerNextAt = now + 200;
+
+      let sum = 0;
+      for (let i = 0; i < steeringGradient.columns.length; i++) {
+        steeringGradient.columns[i] += (Math.random() - 0.5) * 0.3;
+        steeringGradient.columns[i] = Math.max(0, Math.min(1, steeringGradient.columns[i]));
+        sum += steeringGradient.columns[i];
+      }
+
+      let minIdx = 0;
+      let minVal = Infinity;
+      for (let i = 0; i < steeringGradient.columns.length; i++) {
+        if (steeringGradient.columns[i] < minVal) {
+          minVal = steeringGradient.columns[i];
+          minIdx = i;
         }
       }
 
-      const speaker = new RobotSpeaker();
+      const mid = (steeringGradient.columns.length - 1) / 2;
+      state.steerValue = (minIdx - mid) / mid;
 
-      // ===== Main State =====
-      const state = {
-        cvReady: false,
-        mlReady: false,
-        mlEnabled: false,
-        mlInFlight: false,
-        lastObstacleScore: 100,
-        robotEnabled: false,
-        voiceEnabled: true,
-        voiceMode: 'salamander',  // 'salamander' or 'normal'
-
-        robotX: 140,
-        robotY: 140,
-        robotTheta: 0,
-        robotVLin: 0,
-        robotVAng: 0,
-        targetVLin: 0,
-        targetVAng: 0,
-
-        gemmaLastAction: 'WAITING',
-        gemmaNextAt: 0,
-        gemmaThinking: false,
-
-        steerValue: 0,
-        steerNextAt: 0
-      };
-
-      const video = document.getElementById('video');
-      const cvCanvas = document.getElementById('cv');
-
-      async function loadML() {
-        if (window.tf && window.cocoSsd) return;
-
-        console.log("Loading TensorFlow.js...");
-
-        try {
-          if (!window.tf) {
-            await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0");
-          }
-          if (!window.cocoSsd) {
-            await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3");
-          }
-          state.model = await cocoSsd.load();
-          state.mlReady = true;
-          document.getElementById('gemma-status').textContent = 'Ready';
-          console.log("ML Model Ready");
-        } catch (e) {
-          console.error("ML Load Error:", e);
-          document.getElementById('gemma-status').textContent = 'Error';
-        }
+      let steerLabel = '→ Neutral';
+      if (state.steerValue < -0.3) {
+        steerLabel = '← Left';
+      } else if (state.steerValue > 0.3) {
+        steerLabel = 'Right →';
       }
+      document.getElementById('steer-display').textContent = steerLabel;
+    }
 
-      function loadScript(src) {
-        return new Promise((resolve, reject) => {
-          const s = document.createElement('script');
-          s.src = src;
-          s.onload = resolve;
-          s.onerror = reject;
-          document.head.appendChild(s);
+    async function askGemma(now) {
+      if (!state.robotEnabled || now < state.gemmaNextAt || state.gemmaThinking) return;
+
+      state.gemmaThinking = true;
+      state.gemmaNextAt = now + 2500;
+      document.getElementById('gemma-status').textContent = 'Thinking...';
+
+      const distance = state.lastObstacleScore;
+      console.log("Distance:", distance);
+
+      try {
+        const res = await fetch('https://kgninja-functiongemmabotdemo-docker.hf.space/decide', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            front_distance: distance,
+            speed: state.robotVLin,
+            steer: state.steerValue
+          })
         });
-      }
 
-      const capCanvas = document.createElement('canvas');
-      const capCtx = capCanvas.getContext('2d', { willReadFrequently: true });
+        const json = await res.json();
+        console.log("API Response:", json);
 
-      function runCV() {
-        if (!state.cvReady || !video.videoWidth) return;
+        let action = null;
+        let speech = null;
 
-        capCanvas.width = video.videoWidth;
-        capCanvas.height = video.videoHeight;
-        capCtx.drawImage(video, 0, 0);
+        if (json.data && json.data[0]) {
+          const match = json.data[0].match(/\{.*\}/s);
+          if (match) {
+            const d = JSON.parse(match[0]);
+            action = (d.action || '').toLowerCase();
+            speech = d.speech;
+            console.log("Parsed action:", action, "Speech:", speech);
+          }
+        }
 
-        let src = cv.matFromImageData(capCtx.getImageData(0, 0, video.videoWidth, video.videoHeight));
-        let gray = new cv.Mat();
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-        cv.Canny(gray, gray, 50, 100);
-        cv.imshow(cvCanvas, gray);
+        // Fallback speech if not provided
+        if (!speech) {
+          const speechMap = {
+            'move_forward': 'Moving forward',
+            'turn_left': 'Turning left to avoid obstacle',
+            'turn_right': 'Turning right to avoid obstacle',
+            'stop': 'Critical obstacle detected. Stopping.'
+          };
+          speech = speechMap[action] || 'Executing action';
+        }
 
-        src.delete();
-        gray.delete();
-      }
+        // ✨ Robot voice output (with mode selection)
+        if (state.voiceEnabled && speech) {
+          speaker.setVoiceMode(state.voiceMode);
+          speaker.speak(speech);
+        }
 
-      async function runML() {
-        if (!state.mlEnabled || !state.mlReady || state.mlInFlight) return;
-
-        state.mlInFlight = true;
-
-        try {
-          const preds = await state.model.detect(capCanvas);
-
-          if (preds.length > 0) {
-            let obj = preds.sort((a, b) => b.score - a.score)[0];
-            state.lastObstacleScore = Math.max(5, Math.min(100, Math.round(obj.score * 100)));
+        // Fallback logic if no action from API
+        if (!action) {
+          console.warn("⚠️ API invalid, using fallback logic");
+          if (distance < 30) {
+            action = Math.random() > 0.5 ? 'turn_left' : 'turn_right';
+          } else if (distance < 60) {
+            const actions = ['move_forward', 'turn_left', 'turn_right'];
+            action = actions[Math.floor(Math.random() * 3)];
           } else {
-            state.lastObstacleScore = 100;
+            action = 'move_forward';
           }
-
-          document.getElementById('obs-score').textContent = state.lastObstacleScore;
-
-        } catch (e) {
-          console.error("ML Error:", e);
-        } finally {
-          state.mlInFlight = false;
-        }
-      }
-
-      const steeringGradient = {
-        columns: new Float32Array(9),
-        bestSteer: 0
-      };
-
-      function calculateSteering() {
-        const now = performance.now();
-
-        if (now < state.steerNextAt) return;
-        state.steerNextAt = now + 200;
-
-        let sum = 0;
-        for (let i = 0; i < steeringGradient.columns.length; i++) {
-          steeringGradient.columns[i] += (Math.random() - 0.5) * 0.3;
-          steeringGradient.columns[i] = Math.max(0, Math.min(1, steeringGradient.columns[i]));
-          sum += steeringGradient.columns[i];
+          console.log("Fallback action:", action);
         }
 
-        let minIdx = 0;
-        let minVal = Infinity;
-        for (let i = 0; i < steeringGradient.columns.length; i++) {
-          if (steeringGradient.columns[i] < minVal) {
-            minVal = steeringGradient.columns[i];
-            minIdx = i;
-          }
-        }
+        state.gemmaLastAction = action.toUpperCase().replace('_', ' ');
+        document.getElementById('last-decision').textContent = state.gemmaLastAction;
+        document.getElementById('gemma-status').textContent = 'Complete ✓';
 
-        const mid = (steeringGradient.columns.length - 1) / 2;
-        state.steerValue = (minIdx - mid) / mid;
-
-        let steerLabel = '→ Neutral';
-        if (state.steerValue < -0.3) {
-          steerLabel = '← Left';
-        } else if (state.steerValue > 0.3) {
-          steerLabel = 'Right →';
-        }
-        document.getElementById('steer-display').textContent = steerLabel;
-      }
-
-      async function askGemma(now) {
-        if (!state.robotEnabled || now < state.gemmaNextAt || state.gemmaThinking) return;
-
-        state.gemmaThinking = true;
-        state.gemmaNextAt = now + 2500;
-        document.getElementById('gemma-status').textContent = 'Thinking...';
-
-        const distance = state.lastObstacleScore;
-        console.log("Distance:", distance);
-
-        try {
-          const res = await fetch('https://kgninja-functiongemmabotdemo-docker.hf.space/decide', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              front_distance: distance,
-              speed: state.robotVLin,
-              steer: state.steerValue
-            })
-          });
-
-          const json = await res.json();
-          console.log("API Response:", json);
-
-          let action = null;
-          let speech = null;
-
-          if (json.data && json.data[0]) {
-            const match = json.data[0].match(/\{.*\}/s);
-            if (match) {
-              const d = JSON.parse(match[0]);
-              action = (d.action || '').toLowerCase();
-              speech = d.speech;
-              console.log("Parsed action:", action, "Speech:", speech);
-            }
-          }
-
-          // Fallback speech if not provided
-          if (!speech) {
-            const speechMap = {
-              'move_forward': 'Moving forward',
-              'turn_left': 'Turning left to avoid obstacle',
-              'turn_right': 'Turning right to avoid obstacle',
-              'stop': 'Critical obstacle detected. Stopping.'
-            };
-            speech = speechMap[action] || 'Executing action';
-          }
-
-          // ✨ Robot voice output (with mode selection)
-          if (state.voiceEnabled && speech) {
-            speaker.setVoiceMode(state.voiceMode);
-            speaker.speak(speech);
-          }
-
-          // Fallback logic if no action from API
-          if (!action) {
-            console.warn("⚠️ API invalid, using fallback logic");
-            if (distance < 30) {
-              action = Math.random() > 0.5 ? 'turn_left' : 'turn_right';
-            } else if (distance < 60) {
-              const actions = ['move_forward', 'turn_left', 'turn_right'];
-              action = actions[Math.floor(Math.random() * 3)];
-            } else {
-              action = 'move_forward';
-            }
-            console.log("Fallback action:", action);
-          }
-
-          state.gemmaLastAction = action.toUpperCase().replace('_', ' ');
-          document.getElementById('last-decision').textContent = state.gemmaLastAction;
-          document.getElementById('gemma-status').textContent = 'Complete ✓';
-
-          if (action === 'move_forward') {
-            state.targetVLin = 0.8;
-            state.targetVAng = 0;
-            console.log("→ FORWARD");
-          } else if (action === 'turn_left') {
-            state.targetVLin = 0.3;
-            state.targetVAng = -2.0;
-            console.log("→ LEFT");
-          } else if (action === 'turn_right') {
-            state.targetVLin = 0.3;
-            state.targetVAng = 2.0;
-            console.log("→ RIGHT");
-          } else {
-            state.targetVLin = 0;
-            state.targetVAng = 0;
-            console.log("→ STOP");
-          }
-
-        } catch (e) {
-          console.error("Gemma API Error:", e);
-          document.getElementById('gemma-status').textContent = 'API Error';
-
-          // Fallback voice
-          if (state.voiceEnabled) {
-            speaker.speak('Error. Stopping.');
-          }
-
+        if (action === 'move_forward') {
+          state.targetVLin = 0.8;
+          state.targetVAng = 0;
+          console.log("→ FORWARD");
+        } else if (action === 'turn_left') {
+          state.targetVLin = 0.3;
+          state.targetVAng = -2.0;
+          console.log("→ LEFT");
+        } else if (action === 'turn_right') {
+          state.targetVLin = 0.3;
+          state.targetVAng = 2.0;
+          console.log("→ RIGHT");
+        } else {
           state.targetVLin = 0;
           state.targetVAng = 0;
-        } finally {
-          state.gemmaThinking = false;
+          console.log("→ STOP");
         }
+
+      } catch (e) {
+        console.error("Gemma API Error:", e);
+        document.getElementById('gemma-status').textContent = 'API Error';
+
+        // Fallback voice
+        if (state.voiceEnabled) {
+          speaker.speak('Error. Stopping.');
+        }
+
+        state.targetVLin = 0;
+        state.targetVAng = 0;
+      } finally {
+        state.gemmaThinking = false;
+      }
+    }
+
+    function animate(now) {
+      if (!state.cvReady && video.videoWidth > 0) {
+        cvCanvas.width = 320;
+        cvCanvas.height = 240;
+        state.cvReady = true;
       }
 
-      function animate(now) {
-        if (!state.cvReady && video.videoWidth > 0) {
-          cvCanvas.width = 320;
-          cvCanvas.height = 240;
-          state.cvReady = true;
-        }
+      runCV();
+      runML();
+      calculateSteering();
 
-        runCV();
-        runML();
-        calculateSteering();
-
-        if (state.mlEnabled) {
-          askGemma(now);
-        }
-
-        if (state.robotEnabled) {
-          state.robotVLin += (state.targetVLin - state.robotVLin) * 0.15;
-          state.robotVAng += (state.targetVAng - state.robotVAng) * 0.15;
-
-          state.robotTheta += state.robotVAng * 0.016;
-          state.robotX += Math.cos(state.robotTheta) * state.robotVLin * 3;
-          state.robotY += Math.sin(state.robotTheta) * state.robotVLin * 3;
-
-          state.robotX = Math.max(15, Math.min(265, state.robotX));
-          state.robotY = Math.max(15, Math.min(265, state.robotY));
-        }
-
-        document.getElementById('speed-display').textContent = state.robotVLin.toFixed(2);
-
-        drawSimulator();
-        drawSteeringGauge();
-
-        requestAnimationFrame(animate);
+      if (state.mlEnabled) {
+        askGemma(now);
       }
 
-      function drawSteeringGauge() {
-        const canvas = document.getElementById('steer-gauge');
-        if (!canvas) return;
+      if (state.robotEnabled) {
+        state.robotVLin += (state.targetVLin - state.robotVLin) * 0.15;
+        state.robotVAng += (state.targetVAng - state.robotVAng) * 0.15;
 
-        const ctx = canvas.getContext('2d');
-        const w = canvas.width;
-        const h = canvas.height;
+        state.robotTheta += state.robotVAng * 0.016;
+        state.robotX += Math.cos(state.robotTheta) * state.robotVLin * 3;
+        state.robotY += Math.sin(state.robotTheta) * state.robotVLin * 3;
 
-        ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
-        ctx.fillRect(0, 0, w, h);
-
-        const sections = 9;
-        const secWidth = w / sections;
-
-        for (let i = 0; i < sections; i++) {
-          const x = i * secWidth;
-
-          const hazardLevel = steeringGradient.columns[i];
-          const a = 0.15 + 0.65 * hazardLevel;
-          ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
-          ctx.fillRect(x + 1, 4, secWidth - 2, h - 8);
-
-          ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(x + 0.5, 2);
-          ctx.lineTo(x + 0.5, h - 2);
-          ctx.stroke();
-        }
-
-        const steerX = ((state.steerValue + 1) / 2) * w;
-        ctx.strokeStyle = '#0f0';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(steerX, 2);
-        ctx.lineTo(steerX, h - 2);
-        ctx.stroke();
-
-        ctx.font = '9px monospace';
-        ctx.fillStyle = '#0f0';
-        ctx.textAlign = 'left';
-        ctx.fillText('Left', 3, 12);
-        ctx.textAlign = 'right';
-        ctx.fillText('Right', w - 3, 12);
+        state.robotX = Math.max(15, Math.min(265, state.robotX));
+        state.robotY = Math.max(15, Math.min(265, state.robotY));
       }
 
-      function drawSimulator() {
-        const canvas = document.getElementById('robot-sim');
-        const ctx = canvas.getContext('2d');
+      document.getElementById('speed-display').textContent = state.robotVLin.toFixed(2);
 
-        ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
-        ctx.fillRect(0, 0, 280, 280);
+      drawSimulator();
+      drawSteeringGauge();
 
-        ctx.strokeStyle = 'rgba(0, 255, 0, 0.1)';
+      requestAnimationFrame(animate);
+    }
+
+    function drawSteeringGauge() {
+      const canvas = document.getElementById('steer-gauge');
+      if (!canvas) return;
+
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+
+      ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
+      ctx.fillRect(0, 0, w, h);
+
+      const sections = 9;
+      const secWidth = w / sections;
+
+      for (let i = 0; i < sections; i++) {
+        const x = i * secWidth;
+
+        const hazardLevel = steeringGradient.columns[i];
+        const a = 0.15 + 0.65 * hazardLevel;
+        ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
+        ctx.fillRect(x + 1, 4, secWidth - 2, h - 8);
+
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
         ctx.lineWidth = 1;
-        for (let i = 0; i <= 280; i += 28) {
-          ctx.beginPath();
-          ctx.moveTo(i, 0);
-          ctx.lineTo(i, 280);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(0, i);
-          ctx.lineTo(280, i);
-          ctx.stroke();
-        }
-
-        ctx.font = 'bold 16px monospace';
-        ctx.fillStyle = '#0f0';
-        ctx.fillText('AI: ' + state.gemmaLastAction, 15, 30);
-
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(15, 45, 100, 20);
-        ctx.strokeStyle = '#0f0';
-        ctx.strokeRect(15, 45, 100, 20);
-
-        const fillWidth = (state.lastObstacleScore / 100) * 100;
-        ctx.fillStyle = state.lastObstacleScore > 50 ? '#0f0' : state.lastObstacleScore > 20 ? '#ff0' : '#f00';
-        ctx.fillRect(15, 45, fillWidth, 20);
-
-        ctx.font = '11px monospace';
-        ctx.fillStyle = '#0f0';
-        ctx.fillText('Distance: ' + state.lastObstacleScore, 20, 58);
-
-        ctx.save();
-        ctx.translate(state.robotX, state.robotY);
-        ctx.rotate(state.robotTheta);
-
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
         ctx.beginPath();
-        ctx.arc(0, 0, 12, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#0f0';
-        ctx.lineWidth = 2;
+        ctx.moveTo(x + 0.5, 2);
+        ctx.lineTo(x + 0.5, h - 2);
         ctx.stroke();
-
-        ctx.fillStyle = '#0f0';
-        ctx.beginPath();
-        ctx.moveTo(0, -12);
-        ctx.lineTo(-6, 6);
-        ctx.lineTo(6, 6);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.restore();
-
-        ctx.font = '10px monospace';
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
-        ctx.fillText('Velocity: ' + state.robotVLin.toFixed(2), 15, 270);
-        ctx.fillText('Angular: ' + state.robotVAng.toFixed(1), 120, 270);
-
-        if (!state.robotEnabled) {
-          ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
-          ctx.font = 'bold 20px monospace';
-          ctx.fillText('STOPPED', 70, 140);
-        }
       }
 
-      // ===== Keyboard Controls =====
-      window.addEventListener('keydown', e => {
-        if (e.code === 'KeyM') {
-          state.mlEnabled = !state.mlEnabled;
-          if (state.mlEnabled) {
-            loadML();
-            document.getElementById('gemma-status').textContent = 'Loading...';
-          } else {
-            document.getElementById('gemma-status').textContent = 'Disabled';
-            document.getElementById('last-decision').textContent = '-';
-          }
-        }
+      const steerX = ((state.steerValue + 1) / 2) * w;
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(steerX, 2);
+      ctx.lineTo(steerX, h - 2);
+      ctx.stroke();
 
-        if (e.code === 'KeyR') {
-          state.robotEnabled = !state.robotEnabled;
-          const modeEl = document.getElementById('robot-mode');
-          modeEl.textContent = state.robotEnabled ? 'Running' : 'Stopped';
-          modeEl.style.color = state.robotEnabled ? '#0f0' : '#f00';
+      ctx.font = '9px monospace';
+      ctx.fillStyle = '#0f0';
+      ctx.textAlign = 'left';
+      ctx.fillText('Left', 3, 12);
+      ctx.textAlign = 'right';
+      ctx.fillText('Right', w - 3, 12);
+    }
 
-          if (!state.robotEnabled) {
-            state.targetVLin = 0;
-            state.targetVAng = 0;
-            state.robotVLin = 0;
-            state.robotVAng = 0;
-          }
-        }
+    function drawSimulator() {
+      const canvas = document.getElementById('robot-sim');
+      const ctx = canvas.getContext('2d');
 
-        if (e.code === 'KeyV') {
-          state.voiceEnabled = !state.voiceEnabled;
-          const btn = document.getElementById('btn-toggle-voice');
-          btn.textContent = state.voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
-          btn.classList.toggle('off');
-        }
-      });
+      ctx.fillStyle = 'rgba(0, 15, 0, 0.95)';
+      ctx.fillRect(0, 0, 280, 280);
 
-      // ===== Touch Button Controls =====
-      document.getElementById('btn-ai')?.addEventListener('click', () => {
+      ctx.strokeStyle = 'rgba(0, 255, 0, 0.1)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 280; i += 28) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, 280);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(280, i);
+        ctx.stroke();
+      }
+
+      ctx.font = 'bold 16px monospace';
+      ctx.fillStyle = '#0f0';
+      ctx.fillText('AI: ' + state.gemmaLastAction, 15, 30);
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillRect(15, 45, 100, 20);
+      ctx.strokeStyle = '#0f0';
+      ctx.strokeRect(15, 45, 100, 20);
+
+      const fillWidth = (state.lastObstacleScore / 100) * 100;
+      ctx.fillStyle = state.lastObstacleScore > 50 ? '#0f0' : state.lastObstacleScore > 20 ? '#ff0' : '#f00';
+      ctx.fillRect(15, 45, fillWidth, 20);
+
+      ctx.font = '11px monospace';
+      ctx.fillStyle = '#0f0';
+      ctx.fillText('Distance: ' + state.lastObstacleScore, 20, 58);
+
+      ctx.save();
+      ctx.translate(state.robotX, state.robotY);
+      ctx.rotate(state.robotTheta);
+
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 12, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#0f0';
+      ctx.beginPath();
+      ctx.moveTo(0, -12);
+      ctx.lineTo(-6, 6);
+      ctx.lineTo(6, 6);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.restore();
+
+      ctx.font = '10px monospace';
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
+      ctx.fillText('Velocity: ' + state.robotVLin.toFixed(2), 15, 270);
+      ctx.fillText('Angular: ' + state.robotVAng.toFixed(1), 120, 270);
+
+      if (!state.robotEnabled) {
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+        ctx.font = 'bold 20px monospace';
+        ctx.fillText('STOPPED', 70, 140);
+      }
+    }
+
+    // ===== Keyboard Controls =====
+    window.addEventListener('keydown', e => {
+      if (e.code === 'KeyM') {
         state.mlEnabled = !state.mlEnabled;
         if (state.mlEnabled) {
           loadML();
           document.getElementById('gemma-status').textContent = 'Loading...';
         } else {
           document.getElementById('gemma-status').textContent = 'Disabled';
+          document.getElementById('last-decision').textContent = '-';
         }
-      });
+      }
 
-      document.getElementById('btn-robot')?.addEventListener('click', () => {
+      if (e.code === 'KeyR') {
         state.robotEnabled = !state.robotEnabled;
         const modeEl = document.getElementById('robot-mode');
         modeEl.textContent = state.robotEnabled ? 'Running' : 'Stopped';
@@ -874,104 +842,137 @@
           state.robotVLin = 0;
           state.robotVAng = 0;
         }
-      });
+      }
 
-      document.getElementById('btn-toggle-voice-mode')?.addEventListener('click', () => {
-        state.voiceMode = state.voiceMode === 'salamander' ? 'normal' : 'salamander';
-        speaker.setVoiceMode(state.voiceMode);
-
-        const btn = document.getElementById('btn-toggle-voice-mode');
-        const display = document.getElementById('voice-mode-display');
-
-        if (state.voiceMode === 'salamander') {
-          btn.textContent = '🐉 Salamander Mode';
-          btn.style.background = 'rgba(100, 0, 150, 0.3)';
-          btn.style.borderColor = '#a0f';
-          btn.style.color = '#a0f';
-          display.textContent = 'Salamander';
-        } else {
-          btn.textContent = '🤖 Normal Robot';
-          btn.style.background = 'rgba(0, 150, 0, 0.3)';
-          btn.style.borderColor = '#0f0';
-          btn.style.color = '#0f0';
-          display.textContent = 'Normal';
-        }
-      });
-
-      document.getElementById('btn-toggle-voice')?.addEventListener('click', () => {
+      if (e.code === 'KeyV') {
         state.voiceEnabled = !state.voiceEnabled;
         const btn = document.getElementById('btn-toggle-voice');
         btn.textContent = state.voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
         btn.classList.toggle('off');
+      }
+    });
+
+    // ===== Touch Button Controls =====
+    document.getElementById('btn-ai')?.addEventListener('click', () => {
+      state.mlEnabled = !state.mlEnabled;
+      if (state.mlEnabled) {
+        loadML();
+        document.getElementById('gemma-status').textContent = 'Loading...';
+      } else {
+        document.getElementById('gemma-status').textContent = 'Disabled';
+      }
+    });
+
+    document.getElementById('btn-robot')?.addEventListener('click', () => {
+      state.robotEnabled = !state.robotEnabled;
+      const modeEl = document.getElementById('robot-mode');
+      modeEl.textContent = state.robotEnabled ? 'Running' : 'Stopped';
+      modeEl.style.color = state.robotEnabled ? '#0f0' : '#f00';
+
+      if (!state.robotEnabled) {
+        state.targetVLin = 0;
+        state.targetVAng = 0;
+        state.robotVLin = 0;
+        state.robotVAng = 0;
+      }
+    });
+
+    document.getElementById('btn-toggle-voice-mode')?.addEventListener('click', () => {
+      state.voiceMode = state.voiceMode === 'salamander' ? 'normal' : 'salamander';
+      speaker.setVoiceMode(state.voiceMode);
+
+      const btn = document.getElementById('btn-toggle-voice-mode');
+      const display = document.getElementById('voice-mode-display');
+
+      if (state.voiceMode === 'salamander') {
+        btn.textContent = '🐉 Salamander Mode';
+        btn.style.background = 'rgba(100, 0, 150, 0.3)';
+        btn.style.borderColor = '#a0f';
+        btn.style.color = '#a0f';
+        display.textContent = 'Salamander';
+      } else {
+        btn.textContent = '🤖 Normal Robot';
+        btn.style.background = 'rgba(0, 150, 0, 0.3)';
+        btn.style.borderColor = '#0f0';
+        btn.style.color = '#0f0';
+        display.textContent = 'Normal';
+      }
+    });
+
+    document.getElementById('btn-toggle-voice')?.addEventListener('click', () => {
+      state.voiceEnabled = !state.voiceEnabled;
+      const btn = document.getElementById('btn-toggle-voice');
+      btn.textContent = state.voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF';
+      btn.classList.toggle('off');
+    });
+
+    document.getElementById('btn-stop-voice')?.addEventListener('click', () => {
+      speaker.stop();
+    });
+
+    let showInfo = false;
+    document.getElementById('btn-info')?.addEventListener('click', () => {
+      showInfo = !showInfo;
+      const ui = document.getElementById('ui');
+      ui.style.display = showInfo ? 'block' : 'block';
+    });
+
+    cv['onRuntimeInitialized'] = () => {
+      navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
+        video.srcObject = s;
+        video.play();
+
+        adjustSimulatorSize();
+
+        requestAnimationFrame(animate);
+        console.log("System Ready - Press M for AI, R for Robot, V for Voice");
       });
+    };
 
-      document.getElementById('btn-stop-voice')?.addEventListener('click', () => {
-        speaker.stop();
-      });
+    function adjustSimulatorSize() {
+      const simCanvas = document.getElementById('robot-sim');
+      const steerGauge = document.getElementById('steer-gauge');
+      const isMobile = window.innerWidth < 768;
 
-      let showInfo = false;
-      document.getElementById('btn-info')?.addEventListener('click', () => {
-        showInfo = !showInfo;
-        const ui = document.getElementById('ui');
-        ui.style.display = showInfo ? 'block' : 'block';
-      });
+      if (!simCanvas) return;
 
-      cv['onRuntimeInitialized'] = () => {
-        navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
-          video.srcObject = s;
-          video.play();
+      if (isMobile) {
+        const screenWidth = window.innerWidth;
+        const screenHeight = window.innerHeight;
 
-          adjustSimulatorSize();
+        const availableHeight = screenHeight * 0.25;
+        const availableWidth = screenWidth;
 
-          requestAnimationFrame(animate);
-          console.log("System Ready - Press M for AI, R for Robot, V for Voice");
-        });
-      };
+        const maxSize = Math.min(availableWidth * 0.4, availableHeight * 0.9);
 
-      function adjustSimulatorSize() {
-        const simCanvas = document.getElementById('robot-sim');
-        const steerGauge = document.getElementById('steer-gauge');
-        const isMobile = window.innerWidth < 768;
+        simCanvas.width = Math.floor(maxSize);
+        simCanvas.height = Math.floor(maxSize);
+        simCanvas.style.width = maxSize + 'px';
+        simCanvas.style.height = maxSize + 'px';
 
-        if (!simCanvas) return;
+        if (steerGauge) {
+          steerGauge.width = screenWidth - maxSize - 4;
+          steerGauge.height = 30;
+        }
 
-        if (isMobile) {
-          const screenWidth = window.innerWidth;
-          const screenHeight = window.innerHeight;
+        console.log(`Simulator size: ${maxSize}px (Mobile)`);
+      } else {
+        simCanvas.width = 280;
+        simCanvas.height = 280;
+        simCanvas.style.width = '280px';
+        simCanvas.style.height = '280px';
 
-          const availableHeight = screenHeight * 0.25;
-          const availableWidth = screenWidth;
-
-          const maxSize = Math.min(availableWidth * 0.4, availableHeight * 0.9);
-
-          simCanvas.width = Math.floor(maxSize);
-          simCanvas.height = Math.floor(maxSize);
-          simCanvas.style.width = maxSize + 'px';
-          simCanvas.style.height = maxSize + 'px';
-
-          if (steerGauge) {
-            steerGauge.width = screenWidth - maxSize - 4;
-            steerGauge.height = 30;
-          }
-
-          console.log(`Simulator size: ${maxSize}px (Mobile)`);
-        } else {
-          simCanvas.width = 280;
-          simCanvas.height = 280;
-          simCanvas.style.width = '280px';
-          simCanvas.style.height = '280px';
-
-          if (steerGauge) {
-            steerGauge.width = 280;
-            steerGauge.height = 30;
-          }
+        if (steerGauge) {
+          steerGauge.width = 280;
+          steerGauge.height = 30;
         }
       }
+    }
 
-      window.addEventListener('resize', () => {
-        adjustSimulatorSize();
-      });
-    </script>
+    window.addEventListener('resize', () => {
+      adjustSimulatorSize();
+    });
+  </script>
 
 </body>
 
