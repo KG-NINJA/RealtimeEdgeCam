@@ -7,8 +7,10 @@ const state = {
   ready: false,
   obstacle: 100,
   v: 0, w: 0,
-  tv: 0.4, tw: 0,
-  emotion: 'happy'
+  tv: 0.0, tw: 0, // Default to 0 until policy is loaded
+  emotion: 'happy',
+  reflexStatus: 'NORMAL', // [NEW] NORMAL, CAUTION, HALT
+  policy: null           // [NEW] Distilled from VCK5000
 };
 
 const video = document.getElementById('video');
@@ -46,13 +48,22 @@ function init() {
   capCanvas.width = w;
   capCanvas.height = h;
 
-  src      = new cv.Mat(h, w, cv.CV_8UC4);
-  gray     = new cv.Mat(h, w, cv.CV_8UC1);
-  edge     = new cv.Mat(h, w, cv.CV_8UC1);
-  edgeRGBA = new cv.Mat(h, w, cv.CV_8UC4);
-
-  state.ready = true;
-  requestAnimationFrame(loop);
+  // [NEW] Load Distilled Reflex Policy
+  fetch('reflex-policy.json')
+    .then(res => res.json())
+    .then(p => {
+      state.policy = p;
+      console.log('🛡️ VCK5000 Reflex Policy Loaded:', p.metadata);
+      state.ready = true;
+      requestAnimationFrame(loop);
+    })
+    .catch(err => {
+      console.error('❌ Failed to load policy:', err);
+      // Fallback policy if file is missing
+      state.policy = { thresholds: { critical_stop_score: 35, slowdown_score: 65, recovery_score: 75 } };
+      state.ready = true;
+      requestAnimationFrame(loop);
+    });
 }
 
 /* ======================
@@ -82,14 +93,36 @@ function loop() {
   }
   state.obstacle = Math.max(0, 100 - count / 120);
 
-  /* --- steering --- */
-  if (state.obstacle < 30) {
-    state.tv = 0.1; state.tw = 0.7; state.emotion = 'alert';
-  } else if (state.obstacle < 60) {
-    state.tv = 0.3; state.tw = 0.3; state.emotion = 'curious';
-  } else {
-    state.tv = 0.6; state.tw = 0.0; state.emotion = 'happy';
+  /* --- distilled reflex logic (VCK5000 Derived) --- */
+  const { critical_stop_score, slowdown_score, recovery_score } = state.policy.thresholds;
+
+  if (state.obstacle < critical_stop_score) {
+    // HALT State (Safety First)
+    state.reflexStatus = 'HALT';
+    state.tv = 0.0;
+    state.tw = 0.8; // Spin in place to find exit
+    state.emotion = 'panic';
+  } else if (state.obstacle < slowdown_score) {
+    // CAUTION State (Buffer zone)
+    state.reflexStatus = 'CAUTION';
+    state.tv = 0.2;
+    state.tw = 0.4;
+    state.emotion = 'alert';
+  } else if (state.obstacle > recovery_score) {
+    // NORMAL State
+    state.reflexStatus = 'NORMAL';
+    state.tv = 0.6;
+    state.tw = 0.0;
+    state.emotion = 'happy';
   }
+
+  /* --- update UI --- */
+  const statusEl = document.getElementById('reflex-status-text');
+  if (statusEl) {
+    statusEl.textContent = state.reflexStatus;
+    statusEl.style.color = state.reflexStatus === 'HALT' ? '#f00' : (state.reflexStatus === 'CAUTION' ? '#ff0' : '#0f0');
+  }
+  document.getElementById('obs-score').textContent = Math.round(state.obstacle);
 
   state.v += (state.tv - state.v) * 0.06;
   state.w += (state.tw - state.w) * 0.06;

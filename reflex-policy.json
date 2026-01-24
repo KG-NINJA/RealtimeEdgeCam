@@ -1,0 +1,22 @@
+{
+    "metadata": {
+        "source": "VCK5000_Evolution_Grind",
+        "cycles": 12112,
+        "success_rate_halt": 1.0,
+        "timestamp": "2026-01-24"
+    },
+    "thresholds": {
+        "critical_stop_score": 35,
+        "slowdown_score": 65,
+        "recovery_score": 75
+    },
+    "timing": {
+        "watchdog_ms": 100,
+        "decision_filter_cycles": 3
+    },
+    "emotion_mapping": {
+        "35": "panic",
+        "65": "alert",
+        "100": "happy"
+    }
+}
