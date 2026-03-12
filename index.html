@@ -416,6 +416,8 @@
     // ===== Main State =====
     const state = {
       cvReady: false,
+      cvRuntimeReady: false,
+      cameraReady: false,
       mlReady: false,
       mlEnabled: false,
       mlInFlight: false,
@@ -479,7 +481,7 @@
     const capCtx = capCanvas.getContext('2d', { willReadFrequently: true });
 
     function runCV() {
-      if (!state.cvReady || !video.videoWidth) return;
+      if (!state.cvReady || !state.cvRuntimeReady || !window.cv || !video.videoWidth) return;
 
       capCanvas.width = video.videoWidth;
       capCanvas.height = video.videoHeight;
@@ -493,6 +495,12 @@
 
       src.delete();
       gray.delete();
+    }
+
+    function drawRawCameraFrame() {
+      if (!state.cameraReady || !video.videoWidth || !video.videoHeight) return;
+      const ctx = cvCanvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, cvCanvas.width, cvCanvas.height);
     }
 
     async function runML() {
@@ -665,13 +673,18 @@
     }
 
     function animate(now) {
-      if (!state.cvReady && video.videoWidth > 0) {
-        cvCanvas.width = 320;
-        cvCanvas.height = 240;
+      if (!state.cameraReady && video.videoWidth > 0) {
+        cvCanvas.width = video.videoWidth;
+        cvCanvas.height = video.videoHeight;
+        state.cameraReady = true;
         state.cvReady = true;
       }
 
-      runCV();
+      if (state.cvRuntimeReady) {
+        runCV();
+      } else {
+        drawRawCameraFrame();
+      }
       runML();
       calculateSteering();
 
@@ -917,17 +930,137 @@
       ui.style.display = showInfo ? 'block' : 'block';
     });
 
-    cv['onRuntimeInitialized'] = () => {
-      navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
-        video.srcObject = s;
-        video.play();
+    function waitForVideoReady() {
+      return new Promise((resolve, reject) => {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+          resolve();
+          return;
+        }
 
-        adjustSimulatorSize();
+        const timeoutId = setTimeout(() => {
+          cleanup();
+          reject(new Error('Timed out while waiting for camera frames'));
+        }, 6000);
 
-        requestAnimationFrame(animate);
-        console.log("System Ready - Press M for AI, R for Robot, V for Voice");
+        const onLoadedData = () => {
+          cleanup();
+          resolve();
+        };
+
+        const onError = () => {
+          cleanup();
+          reject(video.error || new Error('Video element error'));
+        };
+
+        function cleanup() {
+          clearTimeout(timeoutId);
+          video.removeEventListener('loadeddata', onLoadedData);
+          video.removeEventListener('error', onError);
+        }
+
+        video.addEventListener('loadeddata', onLoadedData, { once: true });
+        video.addEventListener('error', onError, { once: true });
       });
-    };
+    }
+
+    async function setupCamera() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        document.getElementById('gemma-status').textContent = 'Camera unsupported';
+        throw new Error('getUserMedia is not supported in this browser');
+      }
+
+      const constraintsList = [
+        { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+        { video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } },
+        { video: true }
+      ];
+
+      let stream = null;
+      let lastError = null;
+
+      for (const constraints of constraintsList) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          break;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+
+      if (!stream) {
+        document.getElementById('gemma-status').textContent = 'Camera error';
+        throw lastError || new Error('Unable to access camera');
+      }
+
+      video.setAttribute('autoplay', '');
+      video.setAttribute('playsinline', '');
+      video.setAttribute('muted', '');
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = stream;
+
+      try {
+        await video.play();
+      } catch (playError) {
+        console.warn('Autoplay blocked; waiting for first frame anyway:', playError);
+      }
+
+      await waitForVideoReady();
+      document.getElementById('gemma-status').textContent = 'Ready';
+      console.log('Camera stream started');
+    }
+
+    let appStarted = false;
+    async function startApp() {
+      if (appStarted) return;
+      appStarted = true;
+
+      try {
+        await setupCamera();
+      } catch (err) {
+        appStarted = false;
+        console.error('Camera startup failed:', err);
+        const secureHint = window.isSecureContext ? 'Camera permission required' : 'Use HTTPS or localhost';
+        document.getElementById('last-decision').textContent = secureHint;
+        document.getElementById('gemma-status').textContent = 'Camera blocked';
+        return;
+      }
+
+      adjustSimulatorSize();
+      requestAnimationFrame(animate);
+      console.log('System Ready - Press M for AI, R for Robot, V for Voice');
+    }
+
+    function markCvRuntimeReady() {
+      if (state.cvRuntimeReady) return;
+      state.cvRuntimeReady = true;
+      console.log('OpenCV runtime ready');
+    }
+
+    function initOpenCvRuntimeWatch() {
+      if (!window.cv) {
+        console.warn('OpenCV failed to load. Running camera preview without CV processing.');
+        return;
+      }
+
+      // If OpenCV initialized before callback registration, detect immediately.
+      if (typeof window.cv.Mat === 'function') {
+        markCvRuntimeReady();
+        return;
+      }
+
+      window.cv.onRuntimeInitialized = markCvRuntimeReady;
+
+      // Safety timeout so camera preview keeps working even if OpenCV init stalls.
+      setTimeout(() => {
+        if (!state.cvRuntimeReady) {
+          console.warn('OpenCV runtime initialization timed out. Continuing without CV processing.');
+        }
+      }, 6000);
+    }
+
+    initOpenCvRuntimeWatch();
+    startApp();
 
     function adjustSimulatorSize() {
       const simCanvas = document.getElementById('robot-sim');
