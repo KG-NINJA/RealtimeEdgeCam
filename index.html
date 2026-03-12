@@ -983,36 +983,16 @@
       console.log('System Ready - Press M for AI, R for Robot, V for Voice');
     }
 
-    function markCvRuntimeReady() {
-      if (state.cvRuntimeReady) return;
-      state.cvRuntimeReady = true;
-      console.log('OpenCV runtime ready');
+    if (window.cv) {
+      window.cv.onRuntimeInitialized = () => {
+        state.cvRuntimeReady = true;
+        console.log('OpenCV runtime ready');
+        startApp();
+      };
+    } else {
+      console.warn('OpenCV failed to load. Running camera preview without CV processing.');
+      startApp();
     }
-
-    function initOpenCvRuntimeWatch() {
-      if (!window.cv) {
-        console.warn('OpenCV failed to load. Running camera preview without CV processing.');
-        return;
-      }
-
-      // If OpenCV initialized before callback registration, detect immediately.
-      if (typeof window.cv.Mat === 'function') {
-        markCvRuntimeReady();
-        return;
-      }
-
-      window.cv.onRuntimeInitialized = markCvRuntimeReady;
-
-      // Safety timeout so camera preview keeps working even if OpenCV init stalls.
-      setTimeout(() => {
-        if (!state.cvRuntimeReady) {
-          console.warn('OpenCV runtime initialization timed out. Continuing without CV processing.');
-        }
-      }, 6000);
-    }
-
-    initOpenCvRuntimeWatch();
-    startApp();
 
     function adjustSimulatorSize() {
       const simCanvas = document.getElementById('robot-sim');
