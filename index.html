@@ -930,6 +930,39 @@
       ui.style.display = showInfo ? 'block' : 'block';
     });
 
+    function waitForVideoReady() {
+      return new Promise((resolve, reject) => {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+          resolve();
+          return;
+        }
+
+        const timeoutId = setTimeout(() => {
+          cleanup();
+          reject(new Error('Timed out while waiting for camera frames'));
+        }, 6000);
+
+        const onLoadedData = () => {
+          cleanup();
+          resolve();
+        };
+
+        const onError = () => {
+          cleanup();
+          reject(video.error || new Error('Video element error'));
+        };
+
+        function cleanup() {
+          clearTimeout(timeoutId);
+          video.removeEventListener('loadeddata', onLoadedData);
+          video.removeEventListener('error', onError);
+        }
+
+        video.addEventListener('loadeddata', onLoadedData, { once: true });
+        video.addEventListener('error', onError, { once: true });
+      });
+    }
+
     async function setupCamera() {
       if (!navigator.mediaDevices?.getUserMedia) {
         document.getElementById('gemma-status').textContent = 'Camera unsupported';
@@ -937,9 +970,9 @@
       }
 
       const constraintsList = [
-        { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
-        { video: { width: { ideal: 640 }, height: { ideal: 480 } } },
-        { video: true }
+        { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+        { audio: false, video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } },
+        { audio: false, video: true }
       ];
 
       let stream = null;
@@ -959,12 +992,46 @@
         throw lastError || new Error('Unable to access camera');
       }
 
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+      }
+
+      video.setAttribute('autoplay', '');
+      video.setAttribute('playsinline', '');
+      video.setAttribute('muted', '');
+      video.muted = true;
+      video.playsInline = true;
       video.srcObject = stream;
-      await video.play();
+
+      try {
+        await video.play();
+      } catch (playError) {
+        console.warn('Autoplay blocked; waiting for first frame anyway:', playError);
+      }
+
+      await waitForVideoReady();
+      document.getElementById('gemma-status').textContent = 'Ready';
       console.log('Camera stream started');
     }
 
     let appStarted = false;
+    let startRetryHandlersBound = false;
+
+    function bindStartRetryOnUserGesture() {
+      if (startRetryHandlersBound) return;
+      startRetryHandlersBound = true;
+
+      const retryStart = () => {
+        if (appStarted) return;
+        console.log('Retrying camera startup after user gesture');
+        startApp();
+      };
+
+      window.addEventListener('pointerdown', retryStart, { once: true });
+      window.addEventListener('touchstart', retryStart, { once: true });
+      window.addEventListener('keydown', retryStart, { once: true });
+    }
+
     async function startApp() {
       if (appStarted) return;
       appStarted = true;
@@ -974,7 +1041,10 @@
       } catch (err) {
         appStarted = false;
         console.error('Camera startup failed:', err);
-        document.getElementById('last-decision').textContent = 'Camera permission required';
+        const secureHint = window.isSecureContext ? 'Camera permission required' : 'Use HTTPS or localhost';
+        document.getElementById('last-decision').textContent = secureHint;
+        document.getElementById('gemma-status').textContent = 'Camera blocked (tap to retry)';
+        bindStartRetryOnUserGesture();
         return;
       }
 
@@ -983,16 +1053,36 @@
       console.log('System Ready - Press M for AI, R for Robot, V for Voice');
     }
 
-    if (window.cv) {
-      window.cv.onRuntimeInitialized = () => {
-        state.cvRuntimeReady = true;
-        console.log('OpenCV runtime ready');
-        startApp();
-      };
-    } else {
-      console.warn('OpenCV failed to load. Running camera preview without CV processing.');
-      startApp();
+    function markCvRuntimeReady() {
+      if (state.cvRuntimeReady) return;
+      state.cvRuntimeReady = true;
+      console.log('OpenCV runtime ready');
     }
+
+    function initOpenCvRuntimeWatch() {
+      if (!window.cv) {
+        console.warn('OpenCV failed to load. Running camera preview without CV processing.');
+        return;
+      }
+
+      // If OpenCV initialized before callback registration, detect immediately.
+      if (typeof window.cv.Mat === 'function') {
+        markCvRuntimeReady();
+        return;
+      }
+
+      window.cv.onRuntimeInitialized = markCvRuntimeReady;
+
+      // Safety timeout so camera preview keeps working even if OpenCV init stalls.
+      setTimeout(() => {
+        if (!state.cvRuntimeReady) {
+          console.warn('OpenCV runtime initialization timed out. Continuing without CV processing.');
+        }
+      }, 6000);
+    }
+
+    initOpenCvRuntimeWatch();
+    startApp();
 
     function adjustSimulatorSize() {
       const simCanvas = document.getElementById('robot-sim');
